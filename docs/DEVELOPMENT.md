@@ -188,3 +188,16 @@ gofmt -l .        # harus kosong
 go vet ./...
 go test -count=1 ./...
 ```
+
+## Versi Go dan pemeriksaan kerentanan
+
+`go.mod` mensyaratkan **Go ≥ 1.27.4** (memuat perbaikan keamanan `net/http` dan `crypto/x509` yang ditemukan `govulncheck`). Dengan `GOTOOLCHAIN=auto` (default), Go yang lebih lama mengunduh toolchain yang sesuai secara otomatis.
+
+Jalankan `govulncheck` secara lokal sebelum rilis:
+
+```powershell
+go install golang.org/x/vuln/cmd/govulncheck@latest
+govulncheck ./...
+```
+
+Jika melaporkan kerentanan pada modul dependensi, naikkan modulnya (`go get <modul>@<versi-perbaikan>`, lalu `go mod tidy`). Kerentanan di pustaka standar diperbaiki dengan menaikkan versi `go` di `go.mod`.

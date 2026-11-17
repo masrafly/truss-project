@@ -165,7 +165,7 @@ func TestValidate_Rejected(t *testing.T) {
 
 	valid, _, _ := m.Issue(testUserID)
 	parts := strings.Split(valid, ".")
-	tamperedSig := parts[0] + "." + parts[1] + "." + flipLastChar(parts[2])
+	tamperedSig := parts[0] + "." + parts[1] + "." + flipFirstChar(parts[2])
 
 	// Payload diganti (subject user lain) dengan signature lama.
 	otherPayload := sign(t, jwt.SigningMethodHS256, secret, func() jwt.RegisteredClaims {
@@ -240,14 +240,17 @@ func TestValidate_ExpiryIsEnforcedFromIssueTTL(t *testing.T) {
 	}
 }
 
-func flipLastChar(s string) string {
+// flipFirstChar mengganti karakter PERTAMA signature agar pasti berbeda dari aslinya.
+// Jangan memakai karakter terakhir: signature HS256 (32 byte) menjadi 43 karakter base64
+// dan karakter terakhir hanya membawa 4 bit bermakna, sehingga mengganti karakter itu
+// kadang menghasilkan byte signature yang sama persis (test menjadi acak/flaky).
+func flipFirstChar(s string) string {
 	if s == "" {
 		return "x"
 	}
-	last := s[len(s)-1]
 	repl := byte('A')
-	if last == 'A' {
+	if s[0] == 'A' {
 		repl = 'B'
 	}
-	return s[:len(s)-1] + string(repl)
+	return string(repl) + s[1:]
 }
