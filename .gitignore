@@ -1,0 +1,34 @@
+# Secrets / environment
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+secrets/
+
+# Go
+/bin/
+*.exe
+*.test
+*.out
+vendor/
+
+# Node / React
+node_modules/
+dist/
+build/
+.vite/
+coverage/
+
+# Logs
+*.log
+npm-debug.log*
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/*
+!.vscode/extensions.json
+# Pengaturan pribadi Claude Code (settings.json bersama tetap di-commit)
+.claude/settings.local.json

@@ -1,0 +1,250 @@
+=====================================================================
+WORKFLOW TRUSS — GAMBARAN KERJA APLIKASI SETELAH SELESAI (MVP 1)
+=====================================================================
+
+CATATAN STATUS
+  - Seluruh fitur BACKEND MVP 1 di PRD SUDAH DIIMPLEMENTASIKAN dan diuji: auth, workspace +
+    anggota, project + anggota, task, activity history, komentar, dashboard, logger.
+  - Belum ada: modul users (/users/me), frontend (List View / Kanban), refresh token, logout,
+    rate limiting, CI, dan konfigurasi deployment (lihat docs/ROADMAP.md).
+  - Detail request/response tiap endpoint: docs/API.md.
+
+
+---------------------------------------------------------------------
+BAGIAN 1. ALUR PENGGUNA (USER JOURNEY)
+---------------------------------------------------------------------
+
+  1. DAFTAR & LOGIN
+       Pengguna baru  -> POST /auth/register  -> akun dibuat (password di-hash bcrypt)
+       Pengguna lama  -> POST /auth/login     -> menerima access_token (JWT, 24 jam)
+       Semua request berikutnya mengirim:  Authorization: Bearer <access_token>
+
+  2. WORKSPACE
+       Pengguna membuat workspace -> otomatis menjadi OWNER workspace itu.
+       Pengguna hanya melihat workspace tempat ia menjadi anggota.
+
+  3. PROJECT
+       Di dalam workspace, Owner membuat project (nama, deskripsi).
+       Owner menambahkan anggota project (harus user yang sudah terdaftar).
+       Peran project: Owner / Member.
+
+  4. TASK
+       Anggota project yang berwenang membuat task:
+         judul (wajib, maks 200 karakter), deskripsi, prioritas, due date, assignee (opsional).
+       Assignee HARUS anggota project.
+       Status task: todo -> in_progress -> done.
+       Prioritas : low | medium | high | urgent.
+
+  5. KERJA HARIAN
+       - List View : filter status/prioritas, cari judul, pagination.
+       - Kanban    : kolom To Do / In Progress / Done, ubah status dari kartu.
+       - Detail task : komentar + riwayat aktivitas.
+       - Dashboard project : total task, per status, selesai, terlambat (overdue).
+
+  6. PEMANTAUAN
+       Owner melihat ringkasan project (GET /projects/{id}/summary) untuk memantau progres.
+
+
+---------------------------------------------------------------------
+BAGIAN 2. ALUR TEKNIS SATU REQUEST (SEMUA FITUR SAMA POLANYA)
+---------------------------------------------------------------------
+
+  Client
+    |  HTTP request
+    v
+  Gin Router
+    v
+  RequestID        -> buat/validasi X-Request-ID
+    v
+  RequestLogger    -> mulai hitung waktu (log ditulis setelah selesai)
+    v
+  Recovery         -> tangkap panic agar server tidak jatuh
+    v
+  AuthMiddleware   -> (route privat) validasi Bearer token, simpan user_id di context
+    v
+  Handler          -> bind JSON ke DTO request, ambil user_id dari context
+    v
+  UseCase          -> validasi aturan bisnis + CEK OTORISASI (anggota? role cukup?)
+    v
+  Repository       -> query GORM lewat interface (port), terjemahkan error ke error domain
+    v
+  PostgreSQL
+    ^
+    |  hasil kembali melalui jalur yang sama
+  Handler          -> ubah entity domain ke DTO response, petakan error ke status HTTP
+    v
+  RequestLogger    -> tulis 1 baris log: request_id, method, path, status, latency, user_id
+    v
+  Client
+
+  Aturan yang selalu berlaku:
+    - created_by / actor SELALU dari user_id token, TIDAK PERNAH dari body request.
+    - Otorisasi dicek di backend (use case), bukan hanya di frontend.
+    - Error tak terduga: client menerima pesan generik, detail masuk log dengan request_id.
+
+
+---------------------------------------------------------------------
+BAGIAN 3. WORKFLOW PER FITUR
+---------------------------------------------------------------------
+
+3.1 AUTH (SUDAH ADA)
+    Register : validasi input -> cek email belum dipakai -> hash password -> simpan -> 201
+               Email duplikat -> 409.
+    Login    : cari user by email -> bandingkan hash -> terbitkan JWT -> 200
+               Email/password salah -> 401 (pesan sama agar email tidak bisa ditebak).
+    /auth/me : validasi token -> baca profil user dari DB -> 200.
+
+    Aturan umum seluruh modul di bawah:
+      - Tidak boleh MELIHAT sesuatu  -> 404 (orang luar tidak tahu resource itu ada).
+      - Boleh melihat, tidak boleh BERTINDAK -> 403.
+      - "Pengelola" project = Owner/Admin project ATAU Owner/Admin workspace.
+
+3.2 WORKSPACE & ANGGOTA (SUDAH ADA)
+    Buat   : validasi nama -> simpan workspace + anggota Owner dalam SATU TRANSAKSI.
+    Lihat  : hanya workspace tempat user menjadi anggota; bukan anggota -> 404.
+    Anggota: Owner tambah admin/member; Admin tambah member; Member tidak bisa (403).
+             Owner tidak bisa dihapus/keluar (409). Member/Admin boleh keluar.
+    Keluar : dalam SATU TRANSAKSI -> tolak (409) bila masih Owner project di workspace itu
+             -> lepas assignee task-nya + catat aktivitas -> hapus keanggotaan project
+             -> hapus keanggotaan workspace.
+
+3.3 PROJECT & ANGGOTA (SUDAH ADA)
+    Buat project : Owner/Admin workspace saja -> project + anggota Owner satu transaksi
+                   (keanggotaan workspace pembuat dikunci FOR SHARE).
+    Lihat        : anggota project + pengelola workspace; lainnya 404.
+    Ubah         : pengelola. Arsip = status "archived" (task jadi read-only).
+    Hapus        : Owner project / Owner workspace; task, komentar, aktivitas ikut terhapus.
+    Anggota      : hanya anggota workspace yang bisa ditambahkan; pengelola tambah/hapus
+                   admin/member, Admin project hanya member; Owner project tidak bisa dihapus.
+                   Dihapus dari project -> assignee task-nya dilepas + tercatat.
+
+3.4 TASK (SUDAH ADA)
+    Buat    : bisa melihat project -> validasi -> project tidak diarsipkan -> assignee wajib
+              anggota project (dikunci FOR SHARE) -> simpan task + aktivitas "created"
+              dalam satu transaksi.
+    Ubah    : pengelola, pembuat, atau assignee -> kunci baris task (FOR UPDATE) -> cek ulang
+              izin pada data terkunci -> terapkan -> catat aktivitas dari selisih -> updated_at.
+    Hapus   : pengelola atau pembuat (permanen).
+    Daftar  : filter status, prioritas, assignee (me/none/UUID), overdue, cari judul,
+              pagination + total. Kanban memakai endpoint yang sama.
+
+3.5 KOMENTAR (SUDAH ADA)
+    Tulis/baca : yang bisa melihat task; isi wajib (1-5000), penulis = user token.
+    Ubah       : hanya penulis.   Hapus : penulis atau pengelola.
+    Project diarsipkan -> menulis/mengubah/menghapus ditolak 409.
+
+3.6 ACTIVITY HISTORY (SUDAH ADA)
+    - Dibuat OTOMATIS oleh backend dalam transaksi yang sama dengan perubahannya.
+    - Dicatat: created, status, assignee, prioritas, deadline (judul/deskripsi tidak).
+    - Hanya GET /tasks/{id}/activities; tidak ada endpoint untuk membuat/mengubahnya.
+
+3.7 DASHBOARD / SUMMARY (SUDAH ADA)
+    - GET /projects/{id}/summary, satu query agregat untuk project yang diminta.
+    - Total, per status, per prioritas, selesai, terlambat, tanpa assignee, % selesai.
+    - Terlambat = punya deadline, deadline < waktu acuan, status BUKAN done.
+    - Angka "terlambat" = total GET /projects/{id}/tasks?overdue=true (kondisi SQL sama).
+
+
+---------------------------------------------------------------------
+BAGIAN 4. TABEL STATUS HTTP YANG DIPAKAI
+---------------------------------------------------------------------
+
+    200 OK                    request berhasil
+    201 Created               resource dibuat
+    204 No Content            berhasil tanpa body
+    400 Bad Request           input tidak valid
+    401 Unauthorized          belum login / token tidak valid / kredensial salah
+    403 Forbidden             sudah login tetapi tidak punya izin
+    404 Not Found             resource tidak ada (atau disembunyikan demi keamanan)
+    409 Conflict              data konflik (email duplikat, anggota duplikat)
+    500 Internal Server Error kesalahan server, pesan generik ke client
+
+
+---------------------------------------------------------------------
+BAGIAN 5. WORKFLOW PENGEMBANGAN FITUR BARU
+---------------------------------------------------------------------
+
+    1. Tentukan acceptance criteria dan endpoint (OpenAPI).
+    2. Buat migration SQL (up + down), tinjau, jalankan:
+           migrate -path ./migrations -database "$env:DATABASE_URL" up
+    3. Buat modul internal/modules/<fitur>/:
+           domain      -> entity + error bisnis
+           usecase     -> ports.go (interface) + logika bisnis + otorisasi + log peristiwa
+           repository  -> model GORM + mapper + terjemahan error
+           handler     -> DTO + handler Gin + RegisterRoutes
+    4. Rakit di cmd/api/main.go (repository -> usecase -> handler -> RegisterRoutes).
+    5. Tulis test:
+           usecase     -> fake port, tanpa DB
+           handler     -> fake usecase + httptest
+           repository  -> integration test PostgreSQL
+           otorisasi   -> akses lintas workspace/project
+    6. Jalankan:  gofmt, go build ./..., go vet ./..., go test ./...
+    7. Perbarui dokumentasi (docs/API.md, docs/ROADMAP.md, notes.txt).
+    8. Commit kecil dan deskriptif -> Pull Request -> review -> CI hijau.
+
+
+---------------------------------------------------------------------
+BAGIAN 6. WORKFLOW MENJALANKAN & MENGOPERASIKAN APLIKASI
+---------------------------------------------------------------------
+
+  LOKAL
+    1. Pastikan PostgreSQL berjalan, buat database.
+    2. Salin .env.example -> .env, isi DB_*, JWT_SECRET (acak, panjang), APP_ENV=development.
+    3. Jalankan migration.
+    4. go run ./cmd/api
+    5. Uji dengan Postman: register -> login -> pakai token pada endpoint privat.
+
+  PRODUKSI / STAGING (rencana)
+    1. CI: gofmt, vet, test, build image Docker (build dari ./cmd/api).
+    2. Deploy ke staging, jalankan migration, uji alur inti (UAT).
+    3. Secret dari environment/secret manager, BUKAN dari repository.
+    4. APP_ENV=production -> log berformat JSON, Gin release mode.
+    5. Pasang HTTPS, CORS terbatas, rate limiting pada login/register.
+    6. Backup database terjadwal + uji pemulihan; siapkan prosedur rollback.
+
+  MEMANTAU
+    - Cari masalah lewat X-Request-ID: client menyebut ID dari header respons,
+      cari ID itu di log untuk melihat seluruh jejak request.
+    - Level log: info = normal, warn = 4xx / login gagal, error = 5xx / panic / query gagal.
+    - Health check aplikasi dan database (rencana, Phase 7).
+
+
+---------------------------------------------------------------------
+BAGIAN 7. KRITERIA APLIKASI DIANGGAP SELESAI (MVP RELEASE GATE)
+---------------------------------------------------------------------
+
+    Backend (endpoint + unit test + uji mutasi):
+    [x] Pengguna dapat register dan login.
+    [x] Pengguna dapat membuat workspace dan project.
+    [x] Owner dapat mengelola anggota.
+    [x] Anggota berwenang dapat CRUD task.
+    [x] Assignment, status, prioritas, deadline berfungsi.
+    [x] Filter, search, pagination berfungsi (API untuk List View).
+    [x] Komentar dan activity history berfungsi.
+    [x] Dashboard project akurat (overdue tidak menghitung task done).
+    Masih terbuka:
+    [ ] Seluruh integration test lulus terhadap PostgreSQL 18 (tasks/repository belum
+        terkonfirmasi).
+    [ ] Frontend: List View dan Kanban (jika masuk rilis pertama).
+    [ ] Otorisasi ditinjau (security review) tanpa temuan kritis/tinggi.
+    [ ] Test: use case, integration, otorisasi, keamanan lulus; CI hijau.
+    [ ] Backup, konfigurasi deployment, dan prosedur rollback tersedia.
+    [ ] Log tidak memuat password, token, atau data rahasia.
+
+
+---------------------------------------------------------------------
+BAGIAN 8. PERTANYAAN TERBUKA YANG MEMENGARUHI WORKFLOW (dari PRD)
+---------------------------------------------------------------------
+
+    Sudah diputuskan selama implementasi:
+    2. Owner boleh mengelola semua task?  -> Ya: pengelola project/workspace boleh ubah & hapus.
+    3. Task wajib punya assignee?         -> Tidak (opsional, bisa dikosongkan).
+    4. Hapus task permanen/arsip?         -> Task dihapus permanen; arsip ada di tingkat project.
+    5. Komentar & activity bersama task?  -> Ya, keduanya sudah tersedia.
+    6. Cookie session atau bearer token?  -> Bearer token JWT (24 jam).
+
+    Masih terbuka:
+    1. Satu tim kecil atau banyak organisasi sejak awal?
+    7. Apakah Kanban wajib untuk rilis pertama? (API-nya sudah mendukung)
+    8. Target jumlah pengguna dan ukuran dataset untuk pengujian?
+    Keputusan harus dicatat agar backend, database, dan frontend memakai asumsi yang sama.

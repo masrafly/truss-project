@@ -1,0 +1,318 @@
+A. FOLDER UTAMA APLIKASI
+
+**cmd/api/ — titik masuk aplikasi
+
+    Tempat program backend mulai dijalankan.
+    main.go: membaca konfigurasi, menghubungkan database, membuat router, dan menjalankan server HTTP.
+    Idealnya main.go hanya mengatur proses startup, bukan berisi seluruh logika bisnis.
+
+**internal/config/ — konfigurasi aplikasi
+
+    Mengatur nilai konfigurasi yang berbeda antara lingkungan development, testing, dan production.
+    Contoh:
+
+    DATABASE_URL
+    PORT
+    JWT_SECRET
+    GITHUB_WEBHOOK_SECRET
+    AI_API_KEY
+
+    Nilai rahasia dibaca dari environment variable, bukan ditulis langsung dalam source code.
+
+**internal/platform/ — fondasi teknis bersama
+
+    Berisi komponen infrastruktur yang digunakan banyak modul.
+
+    database/: membuat koneksi PostgreSQL, connection pool, dan konfigurasi database.
+    logger/: mencatat error, aktivitas sistem, dan informasi debugging.
+    httpserver/: konfigurasi server HTTP, timeout, dan lifecycle server.
+
+    Folder ini menangani infrastruktur, bukan aturan bisnis seperti kapan sebuah task boleh ditandai selesai.
+
+**internal/middleware/ — pemeriksaan pada request
+
+    Middleware adalah kode yang dijalankan di tengah alur request sebelum atau sesudah handler.
+
+    Contoh:
+
+    Memeriksa token autentikasi.
+    Mengidentifikasi pengguna.
+    Mencatat request.
+    Membatasi request berlebihan (rate limiting).
+    Menangani panic agar tidak menjatuhkan seluruh server.
+
+    Penting: middleware autentikasi saja tidak cukup. Setiap modul juga harus memeriksa apakah pengguna memang berhak mengakses workspace, project, atau task tertentu. 
+
+B. internal/modules/ - FITUR UTAMA TRUSS
+
+**auth/ — autentikasi : Mengurus register, login, logout, token, dan identitas pengguna. Contohnya memverifikasi email dan password serta menerbitkan token akses.
+**users/ — data pengguna : Mengelola profil pengguna, nama, foto profil, dan pengaturan akun. Jangan mencampur semua proses login dan manajemen profil dalam satu modul besar.
+**workspaces/ — organisasi atau ruang kerja : Mengelola workspace, anggota, undangan, dan peran seperti owner, admin, atau member. Workspace menjadi batas organisasi dan akses data.
+**projects/ — manajemen proyek : Mengelola proyek di dalam workspace, nama proyek, deskripsi, status, anggota proyek, dan pengaturan workflow.
+**tasks/ — inti sistem manajemen pekerjaan : Mengelola pembuatan task, assignee, prioritas, status, due date, subtasks, dan perubahan status. Modul ini juga tempat aturan bisnis seperti validasi task dan pemeriksaan transisi status. Misalnya, task tidak boleh berstatus Done jika aturan proyek mewajibkan seluruh acceptance criteria dipenuhi.
+**comments/ — diskusi pada task : Mengelola komentar, pengeditan atau penghapusan komentar sesuai izin, dan hubungan komentar dengan pengguna serta task.
+**notifications/ — pemberitahuan : Menangani notifikasi ketika pengguna ditugaskan ke task, disebut dalam komentar, atau ketika ada perubahan yang relevan. Penyimpanan notifikasi dan pengiriman notifikasi realtime adalah dua tanggung jawab yang berkaitan tetapi berbeda.
+
+
+
+MODUL PEMBENTUK TRUSS:
+**realtime/ — komunikasi langsungMenangani WebSocket, koneksi klien, pengiriman event, dan pengelolaan koneksi.
+    Contoh: ketika seorang developer mengubah status task, anggota tim lain menerima pembaruan tanpa harus me-refresh halaman.
+    Modul ini sebaiknya tidak menjadi tempat penyimpanan utama task. Data task tetap dikelola oleh modul tasks/.
+
+**integrations/github/ — integrasi dengan GitHub
+    Menangani webhook GitHub, validasi signature, pemrosesan event pull request, hasil workflow CI, serta pemetaan repository dan PR ke task TruSS.
+    Contoh: GitHub mengirim event bahwa build gagal, lalu TruSS menyimpan informasi tersebut untuk dianalisis.
+
+**delivery/ — analisis kondisi delivery
+
+    Inilah calon modul pembeda utama TruSS. Modul ini menganalisis data task dan aktivitas engineering untuk menghasilkan temuan risiko.
+
+    Contoh:
+
+    PR tertahan terlalu lama.
+    Build gagal berulang kali.
+    Task belum memiliki bukti pengujian.
+    Release memiliki dependensi yang belum selesai.
+    Aturan yang dapat ditentukan secara pasti sebaiknya memakai logika biasa terlebih dahulu. AI bisa ditambahkan untuk menjelaskan temuan dan menyarankan tindakan.
+
+**ai/ — integrasi kecerdasan buatan
+
+    Mengelola komunikasi dengan penyedia LLM, pembuatan prompt, ringkasan proyek, analisis konteks, dan rekomendasi tindakan.
+    AI sebaiknya tidak mendapatkan akses bebas ke database. Jika AI ingin membuat atau mengubah task, permintaan tersebut harus melewati validasi izin dan aturan bisnis yang sama seperti request biasa.
+
+
+C. FOLDER PENDUKUNG
+
+
+**internal/jobs/ : Pekerjaan background, misalnya pemrosesan webhook yang berat, penghitungan ulang risiko, atau pengiriman notifikasi.
+**migrations/ : File SQL untuk membuat dan mengubah struktur database secara terkontrol.
+**api/ : Kontrak API, misalnya dokumentasi OpenAPI untuk endpoint backend.
+**tests/ : Pengujian lintas modul atau integration test. Unit test juga bisa diletakkan dekat kode yang diuji.
+**scripts/ : Script untuk development, seeding data, atau operasi yang dapat diulang.
+**deployments/ : Konfigurasi deployment seperti Docker Compose dan manifest deployment jika diperlukan.
+**go.mod : Nama modul Go dan daftar dependency langsung serta aturan versinya.
+**go.sum : Checksum dependency untuk membantu memastikan integritas versi yang diunduh.
+**.env.example : Contoh nama variabel environment tanpa rahasia yang sebenarnya.
+**Dockerfile : Instruksi untuk membangun image backend.
+
+STEP 
+- Buat ERD
+- Buat Model DB 
+- Connect DB
+- Buat migrasi database 
+    - migrate create -ext sql -dir migrations -seq create_users
+    - migrate -path ./migrations -database "$env:DATABASE_URL" up
+- user repository
+- auth service
+- auth handler
+- routes
+- auth
+
+
+ALUR PATEN
+Client -> Route -> RequestID -> RequestLogger -> Recovery -> AuthMiddleware (route privat)
+      -> Handler -> DTO Request -> UseCase -> Repository (port) -> Database
+Database -> Repository -> UseCase -> DTO Response -> Handler -> RequestLogger (catat status) -> Client
+
+
+=====================================================================
+CLEAN ARCHITECTURE DI TRUSS (SUDAH DITERAPKAN PADA MODUL AUTH)
+=====================================================================
+
+1. IDE UTAMA
+    Kode dibagi menjadi lapisan seperti lingkaran. ATURAN EMAS: dependensi hanya
+    boleh menunjuk ke DALAM.
+
+        [ Infrastruktur / Adapter ]  gin, gorm, bcrypt, jwt, postgres
+                    |  bergantung pada
+                    v
+        [ Use Case ]                 logika bisnis aplikasi (Register, Login)
+                    |  bergantung pada
+                    v
+        [ Domain ]                   entity + error murni (User)
+
+    Lapisan dalam TIDAK BOLEH mengimpor lapisan luar.
+    - domain tidak tahu gin/gorm/jwt.
+    - usecase tidak tahu gin/gorm/bcrypt/jwt.
+    Cara lapisan dalam "meminta bantuan" lapisan luar: lewat INTERFACE (port).
+    Lapisan luar yang mengimplementasikan interface itu (adapter).
+
+2. STRUKTUR FOLDER SEKARANG
+
+    cmd/api/main.go                      Composition root: merakit semua bagian (wiring)
+    internal/config/config.go            Baca env sekali (Config struct), validasi JWT_SECRET
+    internal/middleware/                 AuthMiddleware (bergantung pada interface TokenValidator),
+                                         RequestID, RequestLogger (access log), Recovery (panic)
+    internal/platform/logger/            Pembuat logger terstruktur (slog)
+    internal/platform/database/          Koneksi PostgreSQL (GORM) + adapter log GORM -> slog
+    internal/platform/security/          BcryptHasher + JWTManager (implementasi teknis)
+    internal/modules/auth/
+        domain/user.go                   Entity User (tanpa tag gorm/json) + error domain
+        usecase/ports.go                 Interface: UserRepository, PasswordHasher, TokenIssuer
+        usecase/auth_usecase.go          Logika bisnis: Register, Login, GetProfile
+        repository/user_gorm.go          Implementasi UserRepository pakai GORM + model tabel
+        handler/auth_handler.go          Adapter HTTP (gin) + RegisterRoutes + pemetaan error ke status
+        handler/dto.go                   DTO request & response (kontrak API)
+    internal/model/                      (LAMA) model GORM modul lain. Belum direfactor,
+                                         akan dipindah ke modules/<fitur>/ saat fiturnya dibuat.
+
+3. TANGGUNG JAWAB TIAP LAPISAN
+
+    DOMAIN (domain/user.go)
+      - Bentuk data inti (User) dan error bisnis (ErrEmailAlreadyUsed, ErrInvalidCredentials,
+        ErrUserNotFound, ErrInvalidInput).
+      - Murni Go biasa. Tidak ada gin, gorm, json tag.
+
+    USE CASE (usecase/)
+      - Aturan bisnis: normalisasi email, cek email sudah dipakai, batas password 72 karakter,
+        hash password, buat token, jangan kembalikan password hash.
+      - Memakai interface (ports.go), sehingga bisa dites dengan mock tanpa database.
+
+    REPOSITORY (repository/)
+      - Satu-satunya tempat yang tahu GORM dan nama tabel/kolom.
+      - Memakai userRecord (model tabel) yang terpisah dari domain.User, lalu dipetakan
+        (toDomain).
+      - Menerjemahkan error GORM menjadi error domain:
+            gorm.ErrRecordNotFound -> domain.ErrUserNotFound
+            gorm.ErrDuplicatedKey  -> domain.ErrEmailAlreadyUsed
+        (butuh TranslateError: true di platform/database/postgres.go)
+
+    HANDLER (handler/)
+      - Satu-satunya tempat yang tahu gin dan HTTP.
+      - Alur: bind JSON -> panggil use case -> ubah hasil jadi DTO response.
+      - writeError() memetakan error domain ke status HTTP:
+            ErrInvalidInput -> 400, ErrEmailAlreadyUsed -> 409,
+            ErrInvalidCredentials -> 401, ErrUserNotFound -> 404, lainnya -> 500
+      - Entity domain tidak pernah dikirim langsung ke client; selalu lewat DTO.
+
+    PLATFORM (platform/)
+      - Implementasi teknis: bcrypt (Hash/Compare), JWT (Issue/Validate), koneksi DB.
+      - Mengisi interface milik use case/middleware.
+
+    MIDDLEWARE
+      - Hanya tahu interface TokenValidator: "token -> userID". Tidak tahu JWT.
+
+    CMD/API/MAIN.GO (composition root)
+      - Satu-satunya tempat yang mengenal SEMUA lapisan dan menyambungkannya:
+            db -> UserGormRepository
+            UserGormRepository + BcryptHasher + JWTManager -> AuthUseCase
+            AuthUseCase -> AuthHandler -> routes
+      - Ini yang disebut Dependency Injection manual.
+
+4. ARAH DEPENDENSI (siapa mengimpor siapa)
+
+    main        -> semua
+    handler     -> usecase, domain, middleware
+    repository  -> domain  (+ gorm)
+    usecase     -> domain
+    platform    -> config  (+ bcrypt/jwt/gorm)
+    domain      -> (tidak mengimpor apa pun dari proyek)
+
+    Perhatikan: usecase TIDAK mengimpor repository. Repository cukup memenuhi interface
+    yang diminta usecase (Go: implicit interface).
+
+5. PERBANDINGAN DENGAN KODE SEBELUMNYA
+
+    Sebelum                                          Sesudah
+    -----------------------------------------------  -------------------------------------
+    Service pakai *repository.UserRepository         Service pakai interface UserRepository
+    Service/handler cek gorm.ErrRecordNotFound       Repository terjemahkan ke error domain
+    model.User dipakai di semua lapisan              domain.User + userRecord + userResponse
+    Handler memanggil auth.GenerateToken langsung    Token dibuat use case lewat TokenIssuer
+    JWT_SECRET dibaca os.Getenv di dalam package     Config dibaca sekali, disuntikkan
+    /auth/me ditulis inline di main.go               AuthHandler.Me + RegisterRoutes
+    Login memanggil c.JSON dua kali (bug)            Satu respons saja
+
+6. CARA MENAMBAH FITUR BARU (contoh: workspaces)
+
+    1. Buat internal/modules/workspaces/{domain,usecase,repository,handler}
+    2. domain: entity + error bisnis
+    3. usecase: ports.go (interface yang dibutuhkan) + logika bisnis
+    4. repository: implementasi GORM + mapper ke domain, terjemahkan error
+    5. handler: DTO + handler gin + RegisterRoutes
+    6. cmd/api/main.go: rakit (wiring) repository -> usecase -> handler
+    Ingat: handler selalu ambil userID dari middleware.UserIDFromContext, lalu use case
+    memeriksa apakah user BERHAK atas workspace/project/task tersebut (otorisasi).
+
+7. CARA MENGETES
+    - Jalankan: go test ./internal/modules/auth/usecase
+    - Use case: SUDAH ADA (auth_usecase_test.go) memakai fake UserRepository/PasswordHasher/
+      TokenIssuer, tanpa database dan tanpa HTTP. Mencakup register, login, profil, batas
+      password, email duplikat, race duplikat, error infrastruktur, dan proteksi timing.
+    - JWT manager (SUDAH ADA): platform/security/jwt_test.go
+    - Middleware (SUDAH ADA): middleware/auth_middleware_test.go, logging_test.go
+    - Handler (SUDAH ADA): modules/auth/handler/auth_handler_test.go, fake authUseCase + httptest.
+    - Workspaces (SUDAH ADA): usecase + handler (unit), repository (integration, lewat
+      internal/testutil/pgtest yang menjalankan SEMUA migration di schema sementara).
+    - Anggota workspace (SUDAH ADA): matriks izin peran diuji penuh di domain/member_test.go;
+      403 = anggota tanpa izin, 404 = non-anggota.
+    - Projects (SUDAH ADA): matriks izin (peran workspace x peran project) diuji penuh di
+      modules/projects/domain/permissions_test.go; use case + handler (unit); repository
+      (integration, termasuk uji kunci FOR SHARE vs FOR UPDATE).
+      Aturan singkat: Owner/Admin workspace = pengelola (buat, lihat semua, ubah);
+      Member workspace hanya melihat project yang ia ikuti; hapus = Owner project atau
+      Owner workspace. Tak boleh melihat -> 404, boleh melihat tapi tak boleh bertindak -> 403.
+    - Keluar workspace: keanggotaan project di workspace itu ikut terhapus (satu transaksi);
+      jika masih Owner project -> 409.
+    - Anggota project (SUDAH ADA): domain/member_test.go menguji matriks penuh.
+      Pengelola (Owner project / Owner-Admin workspace) tambah & hapus admin/member;
+      Admin project hanya member; Member hanya keluar sendiri; Owner project tak bisa
+      dihapus (409). Yang bisa ditambahkan hanya anggota workspace; email tak terdaftar
+      dan bukan anggota workspace sengaja sama-sama 404.
+    - Tasks (SUDAH ADA): domain/domain_test.go menguji matriks izin task + diff aktivitas.
+      Lihat/buat: semua yang bisa melihat project. Ubah: pengelola, pembuat, assignee.
+      Hapus: pengelola, pembuat. Project archived -> tulis ditolak 409.
+      Assignee wajib anggota project; dihapus dari project/keluar workspace -> assignee
+      dilepas otomatis + tercatat. Riwayat: created, status, assignee, prioritas, deadline.
+      PATCH: field tidak dikirim = tetap; null = kosongkan (description/assignee/due_date).
+    - Komentar task (SUDAH ADA): domain/comment_test.go menguji matriks izin.
+      Tulis/baca: yang bisa melihat task. Ubah: hanya penulis. Hapus: penulis atau
+      pengelola. Komentar kosong ditolak; ID komentar harus milik task di path.
+    - Ringkasan project (SUDAH ADA): GET /projects/{id}/summary, satu query agregat.
+      Terlambat = deadline lewat DAN status bukan done (domain.IsOverdue; SQL di
+      repository memakai konstanta overdueCondition yang sama dengan filter
+      ?overdue=true, sehingga angka dashboard = jumlah di daftar task).
+    - Repository (SUDAH ADA): integration test ke PostgreSQL asli di schema sementara.
+      Di-skip otomatis jika TEST_DB_HOST kosong. Cara menjalankan: lihat docs/DEVELOPMENT.md.
+    - Semua: go test ./...
+
+8. LOGGER (log/slog, bawaan Go, tanpa dependency baru)
+
+    Dibuat di main.go setelah config dibaca, lalu DISUNTIKKAN (inject) ke database,
+    use case, handler, dan middleware. Tidak ada variabel global yang dipakai langsung.
+
+    Format : APP_ENV=development -> teks (mudah dibaca), production -> JSON.
+    Level  : LOG_LEVEL = debug | info | warn | error (default info).
+
+    Siapa mencatat apa (supaya tidak ada log ganda):
+      Middleware RequestID     -> buat X-Request-ID per request (juga dikirim ke client)
+      Middleware RequestLogger -> 1 baris per request: request_id, method, path, status,
+                                  latency, client_ip, user_id. 2xx=info, 4xx=warn, 5xx=error
+      Middleware Recovery      -> tangkap panic, catat stack trace, balas 500 generik
+      Use case                 -> peristiwa bisnis: user terdaftar, login berhasil/gagal
+      Handler                  -> error tak terduga (500) + request_id
+      platform/database        -> error query & query lambat (>200 ms)
+      Repository               -> TIDAK mencatat, hanya mengembalikan error
+
+    Aturan keamanan log:
+      - JANGAN catat password, password hash, token JWT, header Authorization, body request,
+        query string, atau email lengkap (pakai user_id).
+      - Log SQL GORM tidak berisi nilai parameter (ParamsFilter) -> hash tidak bocor.
+      - X-Request-ID dari client divalidasi (maks 64 karakter, huruf/angka/-/_)
+        supaya tidak bisa dipakai untuk log injection.
+
+    Cara pakai di kode baru:
+      - Terima *slog.Logger di konstruktor (boleh nil di unit test -> log dibuang).
+      - log.InfoContext(ctx, "pesan", "user_id", id)   // field terstruktur, bukan Sprintf
+
+9. CATATAN PENTING
+    - Env wajib: JWT_SECRET (aplikasi berhenti saat start jika kosong), DB_HOST, DB_PORT,
+      DB_USER, DB_PASSWORD, DB_NAME, DB_SSLMODE.
+      Opsional: APP_PORT (default 8080), APP_ENV (default development),
+      LOG_LEVEL (default info).
+    - Jalankan: go run ./cmd/api
+    - Database: gunakan PostgreSQL 18. Di mesin pengembangan ini terpasang dua server:
+      PostgreSQL 18 (D:\PostgreSQL18) di port 5432 dan PostgreSQL 16 (D:\PostgreSQL) di port 5433.
+      Pastikan DB_PORT di .env = 5432 dan migration sudah dijalankan di server 18.
+    - Dockerfile masih kosong. Saat diisi, build dari ./cmd/api.

@@ -1,0 +1,91 @@
+package handler
+
+import (
+	"context"
+	"log/slog"
+	"net/http"
+
+	"github.com/gin-gonic/gin"
+
+	"truss-project/internal/modules/workspaces/domain"
+)
+
+// memberUseCase adalah interface yang dibutuhkan handler (mudah di-mock).
+type memberUseCase interface {
+	Add(ctx context.Context, actorID, workspaceID, email, role string) (*domain.Member, error)
+	List(ctx context.Context, actorID, workspaceID string) ([]domain.Member, error)
+	Remove(ctx context.Context, actorID, workspaceID, targetUserID string) error
+}
+
+type MemberHandler struct {
+	uc  memberUseCase
+	log *slog.Logger
+}
+
+func NewMemberHandler(uc memberUseCase, log *slog.Logger) *MemberHandler {
+	if log == nil {
+		log = slog.New(slog.DiscardHandler)
+	}
+	return &MemberHandler{uc: uc, log: log.With("module", "workspaces")}
+}
+
+// RegisterRoutes memasang route anggota workspace. Semua route wajib autentikasi.
+func (h *MemberHandler) RegisterRoutes(r gin.IRouter, authMW gin.HandlerFunc) {
+	g := r.Group("/workspaces/:id/members", authMW)
+	g.POST("", h.Add)
+	g.GET("", h.List)
+	g.DELETE("/:userId", h.Remove)
+}
+
+func (h *MemberHandler) Add(c *gin.Context) {
+	actorID, ok := currentUserID(c)
+	if !ok {
+		return
+	}
+
+	var req addMemberRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"message": "Input tidak valid"})
+		return
+	}
+
+	m, err := h.uc.Add(c.Request.Context(), actorID, c.Param("id"), req.Email, req.Role)
+	if err != nil {
+		writeError(c, h.log, err)
+		return
+	}
+
+	c.JSON(http.StatusCreated, gin.H{
+		"message": "Anggota berhasil ditambahkan",
+		"data":    toMemberResponse(m),
+	})
+}
+
+func (h *MemberHandler) List(c *gin.Context) {
+	actorID, ok := currentUserID(c)
+	if !ok {
+		return
+	}
+
+	list, err := h.uc.List(c.Request.Context(), actorID, c.Param("id"))
+	if err != nil {
+		writeError(c, h.log, err)
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"data": toMemberResponses(list)})
+}
+
+func (h *MemberHandler) Remove(c *gin.Context) {
+	actorID, ok := currentUserID(c)
+	if !ok {
+		return
+	}
+
+	if err := h.uc.Remove(c.Request.Context(), actorID, c.Param("id"), c.Param("userId")); err != nil {
+		writeError(c, h.log, err)
+		return
+	}
+
+	c.Status(http.StatusNoContent)
+}

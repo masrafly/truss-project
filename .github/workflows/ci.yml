@@ -1,0 +1,86 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# Hak minimum: CI hanya perlu membaca kode.
+permissions:
+  contents: read
+
+# Push baru ke branch yang sama membatalkan run lama yang belum selesai.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Format, vet, build, test (PostgreSQL 18)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          # Kredensial sekali pakai untuk container test di CI, bukan kredensial asli.
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: truss_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d truss_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+
+    env:
+      TEST_DB_HOST: localhost
+      TEST_DB_PORT: "5432"
+      TEST_DB_USER: postgres
+      TEST_DB_PASSWORD: postgres
+      TEST_DB_NAME: truss_test
+      TEST_DB_SSLMODE: disable
+      # Integration test GAGAL (bukan skip) bila database tidak tersedia.
+      TEST_DB_REQUIRED: "1"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Cek format (gofmt)
+        run: |
+          unformatted="$(gofmt -l .)"
+          if [ -n "$unformatted" ]; then
+            echo "File berikut belum di-gofmt:"
+            echo "$unformatted"
+            exit 1
+          fi
+
+      - name: Verifikasi dependensi
+        run: go mod verify
+
+      - name: go vet
+        run: go vet ./...
+
+      - name: Build
+        run: go build ./...
+
+      # -race hanya tersedia dengan cgo (ada di runner Linux, tidak di mesin Windows lokal).
+      - name: Test (unit + integration, race detector)
+        run: go test -race -count=1 ./...
+
+  vulncheck:
+    name: Cek kerentanan dependensi (govulncheck)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: golang/govulncheck-action@v1
+        with:
+          go-version-file: go.mod
