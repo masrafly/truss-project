@@ -355,6 +355,9 @@ func TestUpdate_AssignWaitsForConcurrentMemberRemoval(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// Bila test gagal sebelum Commit, transaksi HARUS dilepas: tanpa ini conn.Close() menunggu
+	// transaksi tanpa batas waktu dan test menggantung sampai timeout 10 menit.
+	defer func() { _ = tx.Rollback() }()
 	if _, err := tx.ExecContext(ctx, "DELETE FROM project_members WHERE project_id = $1 AND user_id = $2", e.pid, e.member); err != nil {
 		t.Fatal(err)
 	}

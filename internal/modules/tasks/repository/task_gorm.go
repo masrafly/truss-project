@@ -50,14 +50,38 @@ func (r taskRecord) toDomain() domain.Task {
 	}
 }
 
-// taskRow: task + nama assignee (LEFT JOIN users).
+// taskRow: task + nama assignee (LEFT JOIN users). Sengaja struct DATAR, bukan menyematkan
+// taskRecord: GORM mengabaikan field yang tidak diekspor, dan tipe sematan taskRecord
+// tidak diekspor, sehingga semua kolom task terbaca kosong tanpa error (lihat schema_test.go).
 type taskRow struct {
-	taskRecord
-	AssigneeName *string `gorm:"column:assignee_name"`
+	ID           uuid.UUID  `gorm:"column:internal_id"`
+	ProjectID    uuid.UUID  `gorm:"column:project_id"`
+	Title        string     `gorm:"column:title"`
+	Description  *string    `gorm:"column:description"`
+	Status       string     `gorm:"column:status"`
+	Priority     string     `gorm:"column:priority"`
+	AssigneeID   *uuid.UUID `gorm:"column:assignee_id"`
+	CreatedBy    uuid.UUID  `gorm:"column:created_by"`
+	DueDate      *time.Time `gorm:"column:due_date"`
+	CreatedAt    time.Time  `gorm:"column:created_at"`
+	UpdatedAt    time.Time  `gorm:"column:updated_at"`
+	AssigneeName *string    `gorm:"column:assignee_name"`
 }
 
 func (r taskRow) toView() domain.TaskView {
-	v := domain.TaskView{Task: r.taskRecord.toDomain()}
+	v := domain.TaskView{Task: domain.Task{
+		ID:          r.ID,
+		ProjectID:   r.ProjectID,
+		Title:       r.Title,
+		Description: r.Description,
+		Status:      domain.Status(r.Status),
+		Priority:    domain.Priority(r.Priority),
+		AssigneeID:  r.AssigneeID,
+		CreatedBy:   r.CreatedBy,
+		DueDate:     r.DueDate,
+		CreatedAt:   r.CreatedAt,
+		UpdatedAt:   r.UpdatedAt,
+	}}
 	if r.AssigneeID != nil {
 		ref := domain.UserRef{ID: *r.AssigneeID}
 		if r.AssigneeName != nil {

@@ -223,8 +223,7 @@ BAGIAN 7. KRITERIA APLIKASI DIANGGAP SELESAI (MVP RELEASE GATE)
     [x] Komentar dan activity history berfungsi.
     [x] Dashboard project akurat (overdue tidak menghitung task done).
     Masih terbuka:
-    [ ] Seluruh integration test lulus terhadap PostgreSQL 18 (tasks/repository belum
-        terkonfirmasi).
+    [x] Seluruh integration test lulus terhadap PostgreSQL 18 (102 test, lokal dan CI).
     [ ] Frontend: List View dan Kanban (jika masuk rilis pertama).
     [ ] Otorisasi ditinjau (security review) tanpa temuan kritis/tinggi.
     [ ] Test: use case, integration, otorisasi, keamanan lulus; CI hijau.

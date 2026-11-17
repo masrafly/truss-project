@@ -94,7 +94,7 @@
 - [x] Izin: pengelola semua; pembuat ubah & hapus; assignee ubah; lainnya 403. Izin dicek ulang pada baris terkunci.
 - [x] Unit test domain, use case, handler; 15 uji mutasi tertangkap.
 - [x] Integration test pelepasan assignee di `projects/repository` dijalankan terhadap PostgreSQL 18 dan lulus.
-- [ ] Jalankan integration test `tasks/repository` (task + komentar) dan `workspaces/repository` terhadap PostgreSQL 18.
+- [x] Integration test `tasks/repository` (task, komentar, ringkasan, kunci assignee) lulus di PostgreSQL 18: 102 test di empat paket repository, 0 gagal, 0 skip. Run CI pertama menemukan bug nyata (struct sematan tidak diekspor sehingga task terbaca kosong) yang kini diperbaiki dan dijaga `schema_test.go`.
 - [x] Task comments (FR-07): tulis/baca (yang bisa melihat task), ubah (penulis), hapus (penulis/pengelola), pagination, flag `edited`; 12 uji mutasi tertangkap.
 - [x] Project summary / dashboard (FR-09): satu query agregat; overdue mengecualikan task selesai; filter `overdue=true` konsisten dengan ringkasan; 11 uji mutasi tertangkap.
 - [ ] Index `tasks(project_id, due_date)` bila data per project besar (saat ini ringkasan memakai index `project_id`).

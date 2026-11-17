@@ -201,3 +201,28 @@ govulncheck ./...
 ```
 
 Jika melaporkan kerentanan pada modul dependensi, naikkan modulnya (`go get <modul>@<versi-perbaikan>`, lalu `go mod tidy`). Kerentanan di pustaka standar diperbaiki dengan menaikkan versi `go` di `go.mod`.
+
+## Menjalankan integration test lokal tanpa menyentuh database dev
+
+Integration test membuat schema sementara, tetapi lebih aman memakai server PostgreSQL terpisah. Contoh klaster sementara (tanpa Docker; sesuaikan `PGBIN`), pada port 55432 dengan autentikasi `trust` yang hanya mendengarkan `127.0.0.1`:
+
+```bash
+PGBIN=/d/PostgreSQL18/bin; TMP=$(mktemp -d)
+"$PGBIN/initdb.exe" -D "$TMP/data" -U postgres --auth=trust -E UTF8
+"$PGBIN/pg_ctl.exe" -D "$TMP/data" -o "-p 55432 -c listen_addresses=127.0.0.1" -l "$TMP/pg.log" start
+"$PGBIN/psql.exe" -h 127.0.0.1 -p 55432 -U postgres -c "create database truss_test"
+
+export TEST_DB_HOST=127.0.0.1 TEST_DB_PORT=55432 TEST_DB_USER=postgres TEST_DB_NAME=truss_test TEST_DB_SSLMODE=disable
+export TEST_DB_REQUIRED=1        # test GAGAL, bukan skip, bila database tidak tersedia
+go test -count=1 -timeout 5m ./...
+
+"$PGBIN/pg_ctl.exe" -D "$TMP/data" -m fast stop && rm -rf "$TMP"
+```
+
+Atau dengan Docker: `docker run -d -e POSTGRES_PASSWORD=x -e POSTGRES_DB=truss_test -p 127.0.0.1:55432:5432 postgres:18` (isi `TEST_DB_PASSWORD=x`).
+
+Selalu isi `TEST_DB_REQUIRED=1` saat memverifikasi: tanpa itu, integration test yang tidak menemukan database di-skip dan `go test` tetap melaporkan `ok`.
+
+## Pelajaran: GORM dan struct sematan
+
+GORM hanya membaca field yang **diekspor**. Struct hasil query tidak boleh menyematkan tipe yang tidak diekspor (mis. `taskRecord`): semua kolomnya akan terbaca kosong **tanpa error**. `internal/modules/tasks/repository/schema_test.go` memeriksa ini tanpa database dan berjalan di setiap `go test`; tambahkan tipe baru ke test itu.

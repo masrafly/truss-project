@@ -73,7 +73,7 @@ jobs:
 
       # -race hanya tersedia dengan cgo (ada di runner Linux, tidak di mesin Windows lokal).
       - name: Test (unit + integration, race detector)
-        run: go test -race -count=1 ./...
+        run: go test -race -count=1 -timeout 5m ./...
 
   vulncheck:
     name: Cek kerentanan dependensi (govulncheck)
