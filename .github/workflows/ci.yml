@@ -106,3 +106,15 @@ jobs:
 
       - name: Smoke test image
         run: bash scripts/docker-smoke.sh truss-api:smoke
+
+  compose:
+    name: docker compose (API + PostgreSQL + migration)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+
+      # Menjalankan docker-compose.yml sungguhan: migration, API, volume PostgreSQL 18 yang bertahan
+      # setelah down/up, port loopback, dan shutdown rapi. Lihat scripts/compose-smoke.sh.
+      - name: Smoke test docker compose
+        run: bash scripts/compose-smoke.sh

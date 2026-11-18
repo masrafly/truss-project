@@ -29,6 +29,7 @@ migrations/
 
 # Berkas Docker sendiri dan artefak build
 Dockerfile
+docker-compose*.yml
 .dockerignore
 *.exe
 *.test

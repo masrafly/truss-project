@@ -251,3 +251,45 @@ bash scripts/docker-smoke.sh truss-api:smoke
 ```
 
 Skrip menjalankan image bersama PostgreSQL 18 sementara dengan kredensial acak, lalu memeriksa: isi image (tanpa `.env`, `.git`, test), non-root, `HEALTHCHECK` healthy, `/healthz` dan `/readyz`, alur register → login → workspace → project → task, route privat menolak tanpa token, log tanpa rahasia dan tanpa probe, serta `docker stop` berhenti rapi (exit code 0). Job `docker` di CI menjalankannya pada setiap push.
+
+### Docker Compose (API + PostgreSQL 18 + migration)
+
+Menjalankan seluruh stack lokal dengan satu perintah. Database yang dipakai adalah container baru berdata kosong, **terpisah** dari PostgreSQL lokal Anda (port 5432 tidak disentuh).
+
+```powershell
+copy .env.example .env                  # lalu isi nilainya (lihat di bawah)
+go run ./cmd/genjwtsecret               # tempel hasilnya ke JWT_SECRET di .env
+docker compose up -d --build            # db -> migration -> API
+```
+
+`.env` yang dibaca Compose:
+
+| Variabel | Wajib | Keterangan |
+|---|---|---|
+| `DB_PASSWORD` | Ya | Password database baru. **Hanya huruf dan angka**: dipakai apa adanya di URL migration, sehingga karakter seperti `@`, `/`, `:`, atau `#` merusaknya |
+| `JWT_SECRET` | Ya | Minimal 32 byte acak |
+| `DB_USER`, `DB_NAME` | Tidak | Default `truss` dan `truss_db` |
+| `APP_PORT` | Tidak | Port API di host (default 8080) |
+| `DB_HOST_PORT` | Tidak | Port database di host untuk `psql`/DBeaver (default 55432) |
+| `APP_ENV`, `LOG_LEVEL`, `TRUSTED_PROXIES` | Tidak | Diteruskan ke API (default `development`, `info`, kosong) |
+
+`DB_HOST` dan `DB_PORT` di `.env` **diabaikan**: di dalam jaringan Compose, database selalu `db:5432`. Bila `compose up` gagal di langkah migration dengan error koneksi/URL, periksa dulu apakah `DB_PASSWORD` memuat karakter selain huruf dan angka.
+
+Perintah sehari-hari:
+
+```powershell
+docker compose logs -f api                      # log API
+docker compose ps                               # status service
+docker compose down                             # berhenti; data TETAP (volume pgdata)
+docker compose down -v                          # berhenti DAN hapus data database
+docker compose run --rm migrate                 # terapkan migration baru (aman diulang: "no change")
+psql -h 127.0.0.1 -p 55432 -U truss truss_db    # masuk ke database (sesuaikan user/nama)
+```
+
+Catatan:
+- Port API dan database hanya terikat ke `127.0.0.1`, tidak terbuka ke jaringan. Hapus awalan `127.0.0.1:` di `docker-compose.yml` bila memang perlu.
+- **PostgreSQL 18 memasang volume di `/var/lib/postgresql`** (bukan `.../data` seperti versi lama); `PGDATA` berada di subfolder versi. Jangan mengubahnya ke path lama.
+- Penambahan migration baru: letakkan berkasnya di `migrations/`, lalu `docker compose run --rm migrate`. Container `api` tidak perlu dibangun ulang.
+- Perubahan kode: `docker compose up -d --build api`.
+- Ini konfigurasi **lokal/staging sederhana**, bukan produksi: database satu node tanpa replikasi dan backup, SSL internal dimatikan (`DB_SSLMODE=disable`).
+- `scripts/compose-smoke.sh` menguji seluruh stack, termasuk data yang bertahan setelah `down` lalu `up`. Job `compose` di CI menjalankannya.

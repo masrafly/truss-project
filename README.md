@@ -121,7 +121,7 @@ go get github.com/golang-jwt/jwt/v5
 go run ./cmd/api
 ```
 
-Atau sebagai container: lihat bagian Docker di [DEVELOPMENT.md](docs/DEVELOPMENT.md).
+Atau seluruh stack (API + PostgreSQL 18 + migration) dengan Docker: `docker compose up -d --build` (lihat bagian Docker di [DEVELOPMENT.md](docs/DEVELOPMENT.md)).
 
 Secara default aplikasi menggunakan port `8080`, kecuali `APP_PORT` diatur di `.env`. `APP_ENV=production` mengaktifkan log JSON dan Gin release mode; `LOG_LEVEL` dapat diisi `debug`, `info`, `warn`, atau `error`.
 

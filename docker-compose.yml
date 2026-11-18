@@ -1,0 +1,93 @@
+# Lingkungan lokal TruSS: API + PostgreSQL 18 + migration, dengan satu perintah:
+#
+#   docker compose up -d --build        # bangun image, jalankan db, terapkan migration, jalankan API
+#   docker compose logs -f api          # lihat log
+#   docker compose down                 # berhenti (data database TETAP ada di volume)
+#   docker compose down -v              # berhenti DAN hapus data database
+#
+# Konfigurasi dibaca dari berkas .env di folder ini (salin dari .env.example). Yang WAJIB:
+#   DB_PASSWORD  password database (HURUF DAN ANGKA saja; dipakai di URL migration)
+#   JWT_SECRET   minimal 32 byte acak  ->  go run ./cmd/genjwtsecret
+# DB_HOST dan DB_PORT di .env DIABAIKAN di sini: dari dalam jaringan Compose, database
+# selalu dijangkau lewat nama service "db" pada port 5432.
+#
+# Ini untuk pengembangan lokal / staging sederhana, BUKAN konfigurasi produksi
+# (satu node database tanpa replikasi, SSL internal dimatikan, tanpa backup).
+
+name: truss
+
+services:
+  db:
+    image: postgres:18
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${DB_USER:-truss}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?isi DB_PASSWORD di .env (huruf dan angka saja)}
+      POSTGRES_DB: ${DB_NAME:-truss_db}
+    volumes:
+      # PostgreSQL 18+: volume dipasang di /var/lib/postgresql (bukan .../data); PGDATA berada
+      # di subfolder versi, sehingga upgrade mayor tidak menimpa data lama.
+      - pgdata:/var/lib/postgresql
+    ports:
+      # Hanya loopback: dapat diakses dari mesin ini (psql, DBeaver) tetapi tidak dari jaringan.
+      # Port host default 55432 agar tidak bentrok dengan PostgreSQL lokal di 5432.
+      - "127.0.0.1:${DB_HOST_PORT:-55432}:5432"
+    healthcheck:
+      # -h 127.0.0.1: saat inisialisasi, server sementara hanya mendengarkan socket Unix; cek via
+      # TCP memastikan server yang sebenarnya sudah siap menerima koneksi.
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+      start_period: 5s
+
+  # Penerapan migration (golang-migrate). Berjalan sekali lalu selesai; aman diulang (hanya
+  # menerapkan migration yang belum tercatat di tabel schema_migrations).
+  migrate:
+    image: migrate/migrate:v4.20.1
+    depends_on:
+      db:
+        condition: service_healthy
+    volumes:
+      - ./migrations:/migrations:ro
+    command:
+      - "-path=/migrations"
+      - "-database=postgres://${DB_USER:-truss}:${DB_PASSWORD}@db:5432/${DB_NAME:-truss_db}?sslmode=disable"
+      - "up"
+    restart: "no"
+
+  api:
+    build: .
+    image: truss-api:dev
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    environment:
+      APP_ENV: ${APP_ENV:-development}
+      APP_PORT: "8080"
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      DB_HOST: db
+      DB_PORT: "5432"
+      DB_USER: ${DB_USER:-truss}
+      DB_PASSWORD: ${DB_PASSWORD}
+      DB_NAME: ${DB_NAME:-truss_db}
+      # Lalu lintas db <-> api tidak keluar dari jaringan Compose. Untuk produksi gunakan "require".
+      DB_SSLMODE: disable
+      JWT_SECRET: ${JWT_SECRET:?isi JWT_SECRET di .env (go run ./cmd/genjwtsecret)}
+      TRUSTED_PROXIES: ${TRUSTED_PROXIES:-}
+    ports:
+      # Hanya loopback. Hapus "127.0.0.1:" bila API memang harus dapat diakses dari jaringan.
+      - "127.0.0.1:${APP_PORT:-8080}:8080"
+    # Pengerasan: image distroless sudah tanpa shell dan non-root; ini menutup sisanya.
+    read_only: true
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    # Lebih besar dari batas shutdown aplikasi (8 detik) agar request berjalan sempat selesai.
+    stop_grace_period: 15s
+
+volumes:
+  pgdata:

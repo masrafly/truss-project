@@ -116,7 +116,8 @@
 - [x] CI pipeline (GitHub Actions: gofmt, vet, build, test -race + integration PostgreSQL 18, govulncheck). Repository git diinisialisasi (branch `main`).
 - [ ] Commit awal, push ke GitHub, dan pastikan run CI pertama hijau.
 - [x] Dockerfile (multi-stage, distroless, non-root, HEALTHCHECK, shutdown rapi), endpoint `/healthz` dan `/readyz`, smoke test image di CI.
-- [ ] `docker-compose` untuk menjalankan API + PostgreSQL 18 + migration secara lokal, dan konfigurasi deployment target (belum dipilih).
+- [x] `docker-compose.yml` (API + PostgreSQL 18 + migration golang-migrate, port loopback, volume PG 18, container API read-only) dengan smoke test di CI.
+- [ ] Konfigurasi deployment target (belum dipilih): hosting, secret manager, backup database.
 - [ ] Wajibkan `DB_SSLMODE=require` saat `APP_ENV=production` (image memakai `production` sebagai default).
 - [ ] Load and security testing.
 
