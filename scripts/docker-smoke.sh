@@ -27,6 +27,8 @@ trap cleanup EXIT
 
 fail() {
   echo "GAGAL: $*" >&2
+  # Di GitHub Actions, tampilkan juga sebagai anotasi error di halaman ringkasan run.
+  if [ -n "${GITHUB_ACTIONS:-}" ]; then echo "::error title=GAGAL::$*"; fi
   echo "--- log api (30 baris terakhir):" >&2
   docker logs "$API" 2>&1 | tail -30 >&2 || true
   exit 1

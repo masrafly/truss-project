@@ -37,6 +37,8 @@ trap cleanup EXIT
 
 fail() {
   echo "GAGAL: $*" >&2
+  # Di GitHub Actions, tampilkan juga sebagai anotasi error di halaman ringkasan run.
+  if [ -n "${GITHUB_ACTIONS:-}" ]; then echo "::error title=GAGAL::$*"; fi
   echo "--- status service:" >&2
   dc ps -a >&2 || true
   echo "--- log (40 baris terakhir per service):" >&2
@@ -65,11 +67,15 @@ ok "stack naik; /readyz 200"
 MIG_ID="$(dc ps -a -q migrate)"
 [ -n "$MIG_ID" ] || fail "service migrate tidak ditemukan"
 [ "$(docker inspect -f '{{.State.ExitCode}}' "$MIG_ID")" = "0" ] || fail "migration tidak selesai dengan exit code 0"
-VERSION="$(dc exec -T db psql -U "$DB_USER" -d "$DB_NAME" -tAc 'select version || chr(124) || dirty from schema_migrations')"
+# Memakai pemisah kolom psql (-F), BUKAN penggabungan teks di SQL: `version || '|' || dirty` mengubah
+# boolean menjadi 'true'/'false', sedangkan psql mencetak kolom boolean mentah sebagai 't'/'f'.
+VERSION="$(dc exec -T db psql -U "$DB_USER" -d "$DB_NAME" -tA -F '|' -c 'select version, dirty from schema_migrations')"
 [ "$VERSION" = "10|f" ] || fail "schema_migrations = '$VERSION', harapannya '10|f' (versi 10, tidak dirty)"
 ok "migration selesai: versi 10, tidak dirty"
 
-RERUN="$(dc run --rm migrate 2>&1)" || fail "menjalankan migration ulang gagal: $RERUN"
+# -T: tanpa pseudo-TTY. `compose run` mengalokasikan TTY secara default, yang gagal atau menambah
+# karakter kontrol di CI yang tidak punya terminal.
+RERUN="$(dc run --rm -T migrate 2>&1)" || fail "menjalankan migration ulang gagal: $RERUN"
 grep -q "no change" <<<"$RERUN" || fail "migration ulang harus 'no change' (idempoten), dapat: $RERUN"
 ok "migration idempoten (tidak ada perubahan saat diulang)"
 
