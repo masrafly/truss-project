@@ -637,3 +637,13 @@ Daftar ini adalah rencana, bukan endpoint yang sudah tersedia.
 | PATCH | `/users/me` | Memperbarui profil (modul `users` terpisah dari `auth`) |
 
 Path parameter, role, pagination, filter, dan response final harus ditetapkan ketika fitur terkait dirancang.
+## 10. Health
+
+Endpoint publik (tanpa `Authorization`) untuk container dan orkestrator. Tidak dihitung dalam rate limit, dan probe yang sukses tidak dicatat di access log.
+
+| Endpoint | Fungsi | Respons |
+|---|---|---|
+| `GET /healthz` | Liveness: proses hidup dan mampu melayani HTTP. Tidak menyentuh database. | `200 {"status":"ok"}` |
+| `GET /readyz` | Readiness: database dapat dijangkau (batas waktu 2 detik). | `200 {"status":"ready"}` atau `503 {"status":"unavailable"}` |
+
+Respons `503` tidak memuat detail error (host, user, pesan driver); detailnya hanya ada di log server.

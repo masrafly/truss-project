@@ -1,0 +1,39 @@
+# Konteks build hanya perlu go.mod, go.sum, cmd/, dan internal/.
+# Daftar ini menjaga RAHASIA dan berkas tak perlu keluar dari konteks (dan dari image).
+
+# Rahasia / konfigurasi lokal. JANGAN pernah dimasukkan ke image.
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+secrets/
+
+# Riwayat dan konfigurasi pengembangan
+.git
+.github
+.gitignore
+.claude
+.vscode
+.idea
+
+# Dokumentasi, catatan, dan berkas bantu
+docs/
+*.md
+notes.txt
+workflow.txt
+scripts/
+tests/
+deployments/
+migrations/
+
+# Berkas Docker sendiri dan artefak build
+Dockerfile
+.dockerignore
+*.exe
+*.test
+*.out
+/bin/
+
+# Test tidak ikut dibangun ke image
+**/*_test.go

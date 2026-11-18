@@ -24,6 +24,13 @@ func RequestLogger(log *slog.Logger) gin.HandlerFunc {
 		}
 
 		status := c.Writer.Status()
+
+		// Probe kesehatan yang sukses tidak dicatat: dipanggil tiap beberapa detik oleh
+		// Docker/orkestrator dan hanya memenuhi log. Yang gagal (>= 400) tetap tercatat.
+		if status < http.StatusBadRequest && isProbePath(path) {
+			return
+		}
+
 		attrs := []any{
 			"request_id", RequestIDFromContext(c),
 			"method", c.Request.Method,
@@ -46,6 +53,12 @@ func RequestLogger(log *slog.Logger) gin.HandlerFunc {
 			log.Info("request selesai", attrs...)
 		}
 	}
+}
+
+// isProbePath: endpoint health (lihat platform/health). Ditulis literal agar middleware
+// tidak bergantung pada paket platform lain.
+func isProbePath(path string) bool {
+	return path == "/healthz" || path == "/readyz"
 }
 
 // Recovery menangkap panic agar server tidak jatuh, mencatat stack trace

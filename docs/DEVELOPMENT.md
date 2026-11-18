@@ -226,3 +226,28 @@ Selalu isi `TEST_DB_REQUIRED=1` saat memverifikasi: tanpa itu, integration test 
 ## Pelajaran: GORM dan struct sematan
 
 GORM hanya membaca field yang **diekspor**. Struct hasil query tidak boleh menyematkan tipe yang tidak diekspor (mis. `taskRecord`): semua kolomnya akan terbaca kosong **tanpa error**. `internal/modules/tasks/repository/schema_test.go` memeriksa ini tanpa database dan berjalan di setiap `go test`; tambahkan tipe baru ke test itu.
+
+## Docker
+
+`Dockerfile` membangun satu binary statis (multi-stage: `golang:1.27.4-alpine` → `gcr.io/distroless/static-debian12:nonroot`). Image berjalan sebagai user non-root, tanpa shell dan package manager, dan hanya berisi `/app/api`.
+
+```powershell
+docker build -t truss-api .
+docker run --rm -p 8080:8080 --env-file .env -e DB_HOST=host.docker.internal truss-api
+```
+
+- **Konfigurasi hanya lewat environment variable** (lihat `.env.example`). `.env` tidak masuk image (`.dockerignore`). Dari dalam container, `localhost` adalah container itu sendiri: arahkan `DB_HOST` ke database yang dapat dijangkau (di Docker Desktop: `host.docker.internal`, atau nama service bila memakai jaringan Docker).
+- **`APP_ENV=production` adalah default image** (log JSON, Gin release mode). Timpa dengan `-e APP_ENV=development` untuk log teks.
+- **Skema database tidak dibuat oleh image.** Jalankan migration (`migrations/`) dengan golang-migrate sebelum aplikasi.
+- **Endpoint health** (publik, tanpa autentikasi): `GET /healthz` (liveness, tidak menyentuh database) dan `GET /readyz` (readiness, memeriksa database; gagal = `503`). `HEALTHCHECK` Docker memakai `/app/api healthcheck` (binary itu sendiri sebagai klien HTTP, karena distroless tidak punya `curl`) ke `/healthz`. Sengaja bukan `/readyz`: gangguan database tidak boleh membuat container dianggap mati lalu di-restart terus; orkestrator memakai `/readyz` untuk mengalihkan trafik.
+- **Shutdown rapi:** `docker stop` mengirim SIGTERM; server berhenti menerima koneksi baru dan memberi request berjalan waktu hingga 8 detik (`shutdownTimeout`). Naikkan `stop_grace_period` di orkestrator bila memperbesar nilai itu.
+- **Versi Go di Dockerfile (`GO_VERSION`) harus sama dengan baris `go` di `go.mod`.** `GOTOOLCHAIN=local` membuat build gagal bila berbeda, bukan diam-diam memakai Go lain.
+
+### Smoke test image
+
+```powershell
+docker build -t truss-api:smoke .
+bash scripts/docker-smoke.sh truss-api:smoke
+```
+
+Skrip menjalankan image bersama PostgreSQL 18 sementara dengan kredensial acak, lalu memeriksa: isi image (tanpa `.env`, `.git`, test), non-root, `HEALTHCHECK` healthy, `/healthz` dan `/readyz`, alur register → login → workspace → project → task, route privat menolak tanpa token, log tanpa rahasia dan tanpa probe, serta `docker stop` berhenti rapi (exit code 0). Job `docker` di CI menjalankannya pada setiap push.

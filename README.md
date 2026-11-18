@@ -121,6 +121,8 @@ go get github.com/golang-jwt/jwt/v5
 go run ./cmd/api
 ```
 
+Atau sebagai container: lihat bagian Docker di [DEVELOPMENT.md](docs/DEVELOPMENT.md).
+
 Secara default aplikasi menggunakan port `8080`, kecuali `APP_PORT` diatur di `.env`. `APP_ENV=production` mengaktifkan log JSON dan Gin release mode; `LOG_LEVEL` dapat diisi `debug`, `info`, `warn`, atau `error`.
 
 ## 8. Current API
@@ -156,6 +158,7 @@ Secara default aplikasi menggunakan port `8080`, kecuali `APP_PORT` diatur di `.
 | PATCH | `/tasks/:id/comments/:commentId` | Implemented; JWT; hanya penulis |
 | DELETE | `/tasks/:id/comments/:commentId` | Implemented; JWT; penulis atau pengelola |
 | GET | `/projects/:id/summary` | Implemented; JWT; ringkasan dashboard (total, status, terlambat) |
+| GET | `/healthz`, `/readyz` | Implemented; publik; liveness dan readiness (database) untuk container |
 
 Detail request dan response tersedia di [API.md](docs/API.md).
 

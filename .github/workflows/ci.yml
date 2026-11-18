@@ -91,3 +91,18 @@ jobs:
         run: |
           go install golang.org/x/vuln/cmd/govulncheck@latest
           govulncheck ./...
+
+  docker:
+    name: Build image dan smoke test (Docker)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+
+      # Memverifikasi Dockerfile: build multi-stage, lalu image dijalankan bersama PostgreSQL 18
+      # (HEALTHCHECK, alur API nyata, non-root, shutdown rapi). Lihat scripts/docker-smoke.sh.
+      - name: Build image
+        run: docker build -t truss-api:smoke .
+
+      - name: Smoke test image
+        run: bash scripts/docker-smoke.sh truss-api:smoke

@@ -3,11 +3,14 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"log"
 	"log/slog"
 	"net/http"
 	"os"
+	"os/signal"
+	"syscall"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -28,12 +31,19 @@ import (
 	wsrepo "truss-project/internal/modules/workspaces/repository"
 	wsusecase "truss-project/internal/modules/workspaces/usecase"
 	"truss-project/internal/platform/database"
+	"truss-project/internal/platform/health"
 	"truss-project/internal/platform/logger"
 	"truss-project/internal/platform/ratelimit"
 	"truss-project/internal/platform/security"
 )
 
 func main() {
+	// Mode pemeriksa kesehatan untuk Docker HEALTHCHECK (image tanpa curl/shell). Harus
+	// sebelum config dibaca: tidak membutuhkan JWT_SECRET maupun database.
+	if len(os.Args) > 1 && os.Args[1] == healthcheckCommand {
+		os.Exit(healthcheckFromEnv())
+	}
+
 	// .env opsional; logger belum ada di tahap ini, jadi pakai log standar.
 	err := godotenv.Load()
 	if err != nil {
@@ -114,6 +124,14 @@ func main() {
 		middleware.BodyLimit(middleware.DefaultMaxBodyBytes),
 	)
 
+	// Endpoint health publik untuk container/orkestrator: /healthz (liveness) dan
+	// /readyz (readiness, memeriksa database).
+	sqlDB, err := db.DB()
+	if err != nil {
+		fatal(logg, "gagal mengambil koneksi database", err)
+	}
+	health.Register(router, sqlDB, logg)
+
 	authMW := middleware.AuthMiddleware(jwtManager)
 	// Batas per IP untuk register & login: 20 request per menit. Menahan banjir request
 	// dari satu sumber, termasuk upaya membebani CPU lewat bcrypt.
@@ -138,12 +156,42 @@ func main() {
 		MaxHeaderBytes:    1 << 20, // 1 MiB
 	}
 
+	// Graceful shutdown: `docker stop` mengirim SIGTERM. Server berhenti menerima koneksi
+	// baru dan memberi request yang sedang berjalan waktu untuk selesai, bukan memutusnya.
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	serverErr := make(chan error, 1)
+	go func() { serverErr <- srv.ListenAndServe() }()
+
 	logg.Info("server berjalan", "port", cfg.AppPort, "env", cfg.AppEnv,
 		"trusted_proxies", len(cfg.TrustedProxies))
-	if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-		fatal(logg, "gagal menjalankan server", err)
+
+	select {
+	case err := <-serverErr:
+		if err != nil && !errors.Is(err, http.ErrServerClosed) {
+			fatal(logg, "gagal menjalankan server", err)
+		}
+	case <-ctx.Done():
+		stop() // sinyal kedua langsung menghentikan proses (perilaku bawaan)
+		logg.Info("sinyal berhenti diterima; shutdown dimulai", "batas_waktu", shutdownTimeout.String())
+
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
+		defer cancel()
+		if err := srv.Shutdown(shutdownCtx); err != nil {
+			logg.Error("shutdown tidak tuntas; koneksi tersisa diputus", "error", err)
+		}
+		if err := sqlDB.Close(); err != nil {
+			logg.Error("gagal menutup koneksi database", "error", err)
+		}
+		logg.Info("server berhenti")
 	}
 }
+
+// shutdownTimeout: waktu maksimal menunggu request berjalan saat shutdown. Harus lebih kecil
+// dari batas docker stop (default 10 detik) bila ingin tuntas sebelum SIGKILL; naikkan
+// `stop_grace_period` di orkestrator jika memperbesar nilai ini.
+const shutdownTimeout = 8 * time.Second
 
 func fatal(l *slog.Logger, msg string, err error) {
 	l.Error(msg, "error", err)
