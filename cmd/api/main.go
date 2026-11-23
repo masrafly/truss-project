@@ -59,6 +59,14 @@ func main() {
 	logg := logger.New(cfg.AppEnv, cfg.LogLevel)
 	slog.SetDefault(logg)
 
+	if cfg.InsecureDBInProduction() {
+		logg.Warn("koneksi database TANPA TLS di production (ALLOW_INSECURE_DB=true); " +
+			"aman hanya bila database berada di jaringan tertutup yang sama")
+	}
+	if len(cfg.CORSAllowedOrigins) > 0 {
+		logg.Info("CORS aktif", "origins", cfg.CORSAllowedOrigins)
+	}
+
 	db, err := database.Connect(cfg.DB, logg)
 	if err != nil {
 		fatal(logg, "gagal terhubung ke database", err)
@@ -121,8 +129,11 @@ func main() {
 
 	router.Use(
 		middleware.RequestID(),
+		middleware.SecurityHeaders(),
 		middleware.RequestLogger(logg),
 		middleware.Recovery(logg),
+		// CORS sebelum autentikasi dan rate limit: preflight browser tidak membawa Authorization.
+		middleware.CORS(cfg.CORSAllowedOrigins),
 		middleware.BodyLimit(middleware.DefaultMaxBodyBytes),
 	)
 

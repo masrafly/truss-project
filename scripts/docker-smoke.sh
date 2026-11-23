@@ -5,7 +5,7 @@
 # Prasyarat:  docker (engine berjalan) dan curl. Image dibangun lebih dulu: docker build -t truss-api:smoke .
 #
 # Yang diperiksa: image tidak memuat .env/.git/docs/test; HEALTHCHECK menjadi healthy; /healthz dan
-# /readyz 200; alur register -> login -> workspace -> project -> task berjalan; refresh token
+# /readyz 200; production menolak DB tanpa TLS; header keamanan dan CORS; alur register -> login -> workspace -> project -> task berjalan; refresh token
 # (rotasi, pemakaian ulang ditolak, logout); ubah nama dan ganti password; image berjalan
 # sebagai non-root; `docker stop` (SIGTERM) berhenti rapi dengan exit code 0.
 # Semua kredensial dibuat acak per-run dan dibuang bersama container.
@@ -63,6 +63,13 @@ if grep -Eiq '(^|/)(\.env(\..*)?|\.git)(/|$)|_test\.go$' <<<"$LISTING"; then
 fi
 ok "image hanya memuat binary di /app; tidak ada .env, .git, atau test"
 
+# ---------- hardening produksi: image (APP_ENV=production) menolak database tanpa TLS ----------
+REFUSE="$(docker run --rm --network none -e JWT_SECRET="$JWT_SECRET" -e DB_HOST=db.invalid -e DB_USER=u \
+  -e DB_PASSWORD=p -e DB_NAME=d -e DB_SSLMODE=disable "$IMAGE" 2>&1)" && REFUSE_CODE=0 || REFUSE_CODE=$?
+[ "$REFUSE_CODE" != "0" ] || fail "production dengan DB_SSLMODE=disable seharusnya GAGAL start"
+grep -q "DB_SSLMODE" <<<"$REFUSE" || fail "pesan penolakan tidak menyebut DB_SSLMODE: $REFUSE"
+ok "production menolak DB_SSLMODE tanpa TLS (exit $REFUSE_CODE)"
+
 # ---------- infrastruktur sementara ----------
 docker network create "$NET" >/dev/null
 docker run -d --name "$PG" --network "$NET" \
@@ -86,7 +93,8 @@ ok "PostgreSQL 18 siap, semua migration diterapkan"
 docker run -d --name "$API" --network "$NET" -p "127.0.0.1:$PORT:8080" \
   --health-interval=2s --health-start-period=1s --health-retries=10 \
   -e DB_HOST="$PG" -e DB_PORT=5432 -e DB_USER=postgres -e DB_PASSWORD="$PG_PASSWORD" \
-  -e DB_NAME=truss -e DB_SSLMODE=disable -e JWT_SECRET="$JWT_SECRET" \
+  -e DB_NAME=truss -e DB_SSLMODE=disable -e ALLOW_INSECURE_DB=true \
+  -e CORS_ALLOWED_ORIGINS=https://app.example.com -e JWT_SECRET="$JWT_SECRET" \
   "$IMAGE" >/dev/null
 
 STATUS=""
@@ -102,6 +110,21 @@ ok "HEALTHCHECK Docker: healthy"
 [ "$(curl -s -o /dev/null -w '%{http_code}' "$BASE/healthz")" = "200" ] || fail "/healthz bukan 200"
 [ "$(curl -s -o /dev/null -w '%{http_code}' "$BASE/readyz")" = "200" ] || fail "/readyz bukan 200"
 ok "/healthz dan /readyz mengembalikan 200"
+
+# ---------- header keamanan dan CORS ----------
+HDRS="$(curl -s -D - -o /dev/null "$BASE/healthz" -H 'Origin: https://app.example.com' | tr -d '\r')"
+for want in 'x-content-type-options: nosniff' 'x-frame-options: DENY' 'cache-control: no-store' \
+  'access-control-allow-origin: https://app.example.com'; do
+  grep -qi "^$want" <<<"$HDRS" || fail "header '$want' tidak ada pada respons: $HDRS"
+done
+if grep -qi '^strict-transport-security' <<<"$HDRS"; then fail "HSTS tidak boleh dikirim pada HTTP biasa"; fi
+[ "$(curl -s -o /dev/null -w '%{http_code}' -X OPTIONS "$BASE/workspaces" -H 'Origin: https://app.example.com' -H 'Access-Control-Request-Method: GET')" = "204" ] \
+  || fail "preflight dari origin terdaftar harus 204 (tanpa Authorization)"
+[ "$(curl -s -o /dev/null -w '%{http_code}' -X OPTIONS "$BASE/workspaces" -H 'Origin: https://evil.example.com' -H 'Access-Control-Request-Method: GET')" = "403" ] \
+  || fail "preflight dari origin tidak terdaftar harus 403"
+EVIL="$(curl -s -D - -o /dev/null "$BASE/healthz" -H 'Origin: https://evil.example.com' | tr -d '\r')"
+if grep -qi '^access-control-allow-origin' <<<"$EVIL"; then fail "origin tidak terdaftar tidak boleh mendapat Access-Control-Allow-Origin"; fi
+ok "header keamanan, CORS origin terdaftar diizinkan, origin lain ditolak"
 
 # ---------- alur nyata ----------
 JSON='Content-Type: application/json'

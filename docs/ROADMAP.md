@@ -112,8 +112,8 @@
 - [x] Batas ukuran body (1 MiB), timeout server, `TRUSTED_PROXIES`, `JWT_SECRET` minimal 32 byte.
 - [x] Security review manual (lihat SECURITY.md bagian 10); tidak ada temuan Kritis/Tinggi.
 - [ ] Rate limit dengan penyimpanan bersama (Redis) bila lebih dari satu instance.
-- [ ] Wajibkan `DB_SSLMODE=require` di produksi.
-- [ ] CORS and security headers.
+- [x] `DB_SSLMODE` aman dipaksakan di produksi (override eksplisit `ALLOW_INSECURE_DB`).
+- [x] CORS (`CORS_ALLOWED_ORIGINS`) dan header keamanan.
 - [ ] HTTPS deployment.
 - [ ] Database backup and restore procedure.
 - [x] CI pipeline (GitHub Actions: gofmt, vet, build, test -race + integration PostgreSQL 18, govulncheck). Repository git diinisialisasi (branch `main`).
@@ -121,7 +121,7 @@
 - [x] Dockerfile (multi-stage, distroless, non-root, HEALTHCHECK, shutdown rapi), endpoint `/healthz` dan `/readyz`, smoke test image di CI.
 - [x] `docker-compose.yml` (API + PostgreSQL 18 + migration golang-migrate, port loopback, volume PG 18, container API read-only) dengan smoke test di CI.
 - [ ] Konfigurasi deployment target (belum dipilih): hosting, secret manager, backup database.
-- [ ] Wajibkan `DB_SSLMODE=require` saat `APP_ENV=production` (image memakai `production` sebagai default).
+- [x] Wajibkan `DB_SSLMODE` terenkripsi saat `APP_ENV=production` (image memakai `production` sebagai default); smoke test image memeriksa penolakannya.
 - [ ] Load and security testing.
 
 ## Current Recommended Next Step

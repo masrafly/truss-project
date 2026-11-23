@@ -12,6 +12,12 @@ Request body menggunakan JSON kecuali dinyatakan lain.
 
 Setiap respons menyertakan header `X-Request-ID`. Client boleh mengirim header yang sama (maks. 64 karakter; huruf, angka, `-`, `_`); jika tidak valid atau kosong, server membuat ID baru. Sertakan ID ini saat melaporkan masalah agar log server mudah ditelusuri.
 
+### Header keamanan dan CORS
+
+Setiap respons membawa header pengerasan (`X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `Content-Security-Policy`, `Referrer-Policy: no-referrer`, `Cache-Control: no-store`, dan HSTS pada HTTPS). Karena `Cache-Control: no-store`, client dan proxy tidak boleh menyimpan respons API.
+
+Pemanggilan dari browser lintas origin hanya diizinkan untuk origin yang terdaftar di `CORS_ALLOWED_ORIGINS`. Header yang dapat dibaca client: `X-Request-ID` dan `Retry-After`. Preflight dari origin tidak terdaftar dijawab `403`.
+
 ### Pagination
 
 Semua endpoint daftar memakai pagination yang sama: `?page=` (mulai 1, default 1) dan `?limit=` (default dan batas atas tergantung endpoint). Respons memuat `meta`:

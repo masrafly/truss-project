@@ -94,6 +94,10 @@ TRUSTED_PROXIES=
 # Opsional: masa berlaku token (default 15m dan 720h)
 ACCESS_TOKEN_TTL=15m
 REFRESH_TOKEN_TTL=720h
+# Opsional: origin frontend yang boleh memanggil API dari browser (kosong = tanpa CORS)
+CORS_ALLOWED_ORIGINS=
+# Production menolak DB_SSLMODE tanpa TLS; isi true hanya bila database di jaringan tertutup yang sama
+ALLOW_INSECURE_DB=
 ```
 
 Buat `.env.example` dengan nama variabel yang sama tetapi tanpa secret atau password asli. Jangan commit `.env` ke Git.

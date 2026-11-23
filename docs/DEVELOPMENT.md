@@ -30,6 +30,8 @@ Seluruh konfigurasi dibaca sekali oleh `internal/config/config.go`.
 | `DB_SSLMODE` | Ya | Mode SSL PostgreSQL |
 | `JWT_SECRET` | Ya | Secret penandatanganan JWT, **minimal 32 byte**; aplikasi berhenti saat start jika kosong atau terlalu pendek |
 | `TRUSTED_PROXIES` | Tidak | IP/CIDR reverse proxy yang dipercaya untuk `X-Forwarded-For`, dipisah koma. Kosong = tidak ada (aman untuk lokal) |
+| `CORS_ALLOWED_ORIGINS` | Tidak | Origin frontend yang boleh memanggil API dari browser, dipisah koma (mis. `https://app.example.com,http://localhost:5173`). Kosong = tanpa CORS. `*` dan origin dengan path ditolak; `http://` di production hanya untuk localhost |
+| `ALLOW_INSECURE_DB` | Tidak | `true` mengizinkan `DB_SSLMODE` tanpa TLS saat `APP_ENV=production`. Default tidak. Hanya untuk database di jaringan tertutup yang sama |
 | `ACCESS_TOKEN_TTL` | Tidak | Masa berlaku access token, format durasi (`15m`, `1h`). Default `15m`, batas 1 menit sampai 24 jam |
 | `REFRESH_TOKEN_TTL` | Tidak | Masa berlaku refresh token (`720h` = 30 hari). Default `720h`, batas 1 jam sampai 2160h, harus lebih lama daripada `ACCESS_TOKEN_TTL` |
 
@@ -277,6 +279,7 @@ docker compose up -d --build            # db -> migration -> API
 | `DB_HOST_PORT` | Tidak | Port database di host untuk `psql`/DBeaver (default 55432) |
 | `APP_ENV`, `LOG_LEVEL`, `TRUSTED_PROXIES` | Tidak | Diteruskan ke API (default `development`, `info`, kosong) |
 | `ACCESS_TOKEN_TTL`, `REFRESH_TOKEN_TTL` | Tidak | Diteruskan ke API (default `15m` dan `720h`) |
+| `CORS_ALLOWED_ORIGINS`, `ALLOW_INSECURE_DB` | Tidak | Diteruskan ke API (default kosong). Dengan `APP_ENV=production`, Compose (yang memakai `DB_SSLMODE=disable`) hanya jalan bila `ALLOW_INSECURE_DB=true` |
 
 `DB_HOST` dan `DB_PORT` di `.env` **diabaikan**: di dalam jaringan Compose, database selalu `db:5432`. Bila `compose up` gagal di langkah migration dengan error koneksi/URL, periksa dulu apakah `DB_PASSWORD` memuat karakter selain huruf dan angka.
 
@@ -296,5 +299,5 @@ Catatan:
 - **PostgreSQL 18 memasang volume di `/var/lib/postgresql`** (bukan `.../data` seperti versi lama); `PGDATA` berada di subfolder versi. Jangan mengubahnya ke path lama.
 - Penambahan migration baru: letakkan berkasnya di `migrations/`, lalu `docker compose run --rm migrate`. Container `api` tidak perlu dibangun ulang.
 - Perubahan kode: `docker compose up -d --build api`.
-- Ini konfigurasi **lokal/staging sederhana**, bukan produksi: database satu node tanpa replikasi dan backup, SSL internal dimatikan (`DB_SSLMODE=disable`).
+- Ini konfigurasi **lokal/staging sederhana**, bukan produksi: database satu node tanpa replikasi dan backup, SSL internal dimatikan (`DB_SSLMODE=disable`). Karena itu, bila `APP_ENV=production` di `.env`, API menolak start sampai `ALLOW_INSECURE_DB=true` diisi.
 - `scripts/compose-smoke.sh` menguji seluruh stack, termasuk data yang bertahan setelah `down` lalu `up`. Job `compose` di CI menjalankannya.

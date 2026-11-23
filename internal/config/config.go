@@ -4,7 +4,9 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"net/url"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -51,7 +53,19 @@ type Config struct {
 	// X-Forwarded-For. Kosong = tidak ada (IP client = alamat koneksi langsung).
 	// Penting untuk log dan rate limiting per IP agar tidak bisa dipalsukan.
 	TrustedProxies []string
+
+	// CORSAllowedOrigins (CORS_ALLOWED_ORIGINS): origin frontend yang boleh memanggil API dari
+	// browser, mis. https://app.example.com. Kosong = tidak ada header CORS (hanya same-origin).
+	CORSAllowedOrigins []string
+
+	// AllowInsecureDB (ALLOW_INSECURE_DB=true) mengizinkan DB_SSLMODE tanpa TLS saat
+	// APP_ENV=production. Hanya untuk database di jaringan tertutup yang sama (mis. Compose).
+	AllowInsecureDB bool
 }
+
+// secureSSLModes: mode yang benar-benar mengenkripsi koneksi ke database. "prefer" dan "allow"
+// turun ke koneksi tanpa enkripsi bila server tidak mendukung TLS (atau penyerang memaksanya).
+var secureSSLModes = map[string]bool{"require": true, "verify-ca": true, "verify-full": true}
 
 // Load membaca environment variable sekali, di awal aplikasi.
 func Load() (*Config, error) {
@@ -106,7 +120,62 @@ func Load() (*Config, error) {
 	}
 	cfg.TrustedProxies = proxies
 
+	origins, err := parseCORSOrigins(os.Getenv("CORS_ALLOWED_ORIGINS"), cfg.AppEnv)
+	if err != nil {
+		return nil, err
+	}
+	cfg.CORSAllowedOrigins = origins
+
+	if raw := strings.TrimSpace(os.Getenv("ALLOW_INSECURE_DB")); raw != "" {
+		allow, err := strconv.ParseBool(raw)
+		if err != nil {
+			return nil, errors.New("ALLOW_INSECURE_DB tidak valid: gunakan true atau false")
+		}
+		cfg.AllowInsecureDB = allow
+	}
+	if cfg.AppEnv == "production" && !secureSSLModes[cfg.DB.SSLMode] && !cfg.AllowInsecureDB {
+		return nil, fmt.Errorf(
+			"DB_SSLMODE=%q tidak aman untuk production: gunakan require, verify-ca, atau verify-full "+
+				"(atau ALLOW_INSECURE_DB=true bila database berada di jaringan tertutup yang sama)",
+			cfg.DB.SSLMode)
+	}
+
 	return cfg, nil
+}
+
+// InsecureDBInProduction melaporkan apakah aplikasi berjalan di production dengan koneksi
+// database tanpa TLS (diizinkan lewat ALLOW_INSECURE_DB); dipakai untuk peringatan saat start.
+func (c *Config) InsecureDBInProduction() bool {
+	return c.AppEnv == "production" && !secureSSLModes[c.DB.SSLMode]
+}
+
+// parseCORSOrigins menerima daftar origin dipisah koma. Setiap origin harus persis
+// skema://host[:port] (tanpa path, query, atau garis miring di akhir); "*" ditolak karena
+// mengizinkan situs mana pun memanggil API dari browser pengguna. Di production, origin
+// http:// hanya diizinkan untuk localhost.
+func parseCORSOrigins(s, appEnv string) ([]string, error) {
+	var out []string
+	seen := map[string]bool{}
+	for _, raw := range strings.Split(s, ",") {
+		o := strings.TrimSpace(raw)
+		if o == "" {
+			continue
+		}
+		u, err := url.Parse(o)
+		if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" ||
+			u.Path != "" || u.RawQuery != "" || u.Fragment != "" || u.User != nil || o != u.Scheme+"://"+u.Host {
+			return nil, fmt.Errorf("CORS_ALLOWED_ORIGINS memuat origin tidak valid %q: gunakan bentuk https://app.example.com (tanpa path atau garis miring akhir; * tidak diizinkan)", o)
+		}
+		host := u.Hostname()
+		if appEnv == "production" && u.Scheme == "http" && host != "localhost" && host != "127.0.0.1" {
+			return nil, fmt.Errorf("CORS_ALLOWED_ORIGINS: origin http %q tidak diizinkan di production (gunakan https)", o)
+		}
+		if !seen[o] {
+			seen[o] = true
+			out = append(out, o)
+		}
+	}
+	return out, nil
 }
 
 // parseTTL membaca durasi dari environment variable name; kosong = def. Di luar [min, max]

@@ -101,6 +101,27 @@ Sudah diterapkan:
 - **Validasi panjang input** sesuai kolom database (mis. nama user ≤ 100, email ≤ 255), agar input panjang dibalas 400, bukan 500.
 - Semua query memakai parameter; tidak ada SQL yang dirangkai dari input user.
 
+### 6.0 Header keamanan dan CORS
+
+**Header keamanan** (`middleware.SecurityHeaders`) dikirim pada setiap respons, termasuk 401, 404, dan panic yang dipulihkan:
+
+| Header | Nilai | Tujuan |
+|---|---|---|
+| `X-Content-Type-Options` | `nosniff` | Browser tidak menebak tipe konten |
+| `X-Frame-Options` | `DENY` | Tidak dapat ditanam di frame (clickjacking) |
+| `Content-Security-Policy` | `default-src 'none'; frame-ancestors 'none'` | API hanya JSON; tidak ada konten aktif yang boleh dimuat |
+| `Referrer-Policy` | `no-referrer` | URL tidak bocor lewat Referer |
+| `Cache-Control` | `no-store` | Respons berisi data privat dan token; tidak boleh dicache browser atau proxy |
+| `Strict-Transport-Security` | `max-age=31536000; includeSubDomains` | Hanya pada koneksi HTTPS (TLS langsung atau `X-Forwarded-Proto: https`); diabaikan browser di HTTP |
+
+**CORS** (`middleware.CORS`, diatur dengan `CORS_ALLOWED_ORIGINS`):
+- Default kosong: tidak ada header CORS, sehingga browser hanya mengizinkan same-origin.
+- Origin harus persis `skema://host[:port]`, dipisah koma. `*`, path, garis miring akhir, dan userinfo ditolak saat start. Di production, `http://` hanya diizinkan untuk `localhost` dan `127.0.0.1`.
+- Origin terdaftar mendapat `Access-Control-Allow-Origin` berisi origin itu (bukan `*`) dan `Vary: Origin`. Preflight (`OPTIONS` + `Access-Control-Request-Method`) dijawab 204 sebelum autentikasi, karena preflight tidak membawa `Authorization`. Metode yang diizinkan: GET, POST, PATCH, DELETE, OPTIONS; header: `Authorization`, `Content-Type`, `X-Request-ID`.
+- Origin tidak terdaftar: tanpa header CORS (browser memblokir pembacaan respons), preflight dijawab 403.
+- Tidak memakai `Access-Control-Allow-Credentials`: autentikasi lewat header `Authorization`, bukan cookie. Bila suatu saat memakai cookie, desain ini harus ditinjau ulang (termasuk perlindungan CSRF).
+- Perlu diingat: CORS melindungi pengguna browser, bukan API dari klien non-browser; otorisasi tetap dari token dan database.
+
 ### 6.1 Rate limiting
 
 | Lapis | Kunci | Batas | Respons |
@@ -115,10 +136,10 @@ Sudah diterapkan:
 
 Recommended controls:
 - Gunakan HTTPS di luar local development.
-- Atur CORS berdasarkan origin frontend yang diizinkan.
+- CORS dan header keamanan sudah diterapkan (bagian 6.0).
 - Jangan mengirim detail internal error, SQL, stack trace, atau secret ke client.
 - Jangan mencatat Authorization header atau token utuh.
-- Pertimbangkan security headers dan audit logging.
+- Pertimbangkan audit logging.
 
 ## 7. Environment and Secrets
 
@@ -131,6 +152,7 @@ Recommended controls:
 
 ## 8. Data and Database
 
+- **TLS ke database dipaksakan di production.** Dengan `APP_ENV=production`, aplikasi menolak start bila `DB_SSLMODE` bukan `require`, `verify-ca`, atau `verify-full` (termasuk kosong, yang berarti `prefer` pada driver: turun ke koneksi tanpa enkripsi bila TLS gagal atau dipaksa gagal oleh penyerang). `require` mengenkripsi tetapi tidak memverifikasi identitas server; `verify-full` juga memverifikasi sertifikat dan nama host dan paling aman. Bila database memang berada di jaringan tertutup yang sama (mis. Docker Compose di satu host), izinkan secara sadar dengan `ALLOW_INSECURE_DB=true`; aplikasi mencatat peringatan setiap start.
 - Terapkan least-privilege pada database user.
 - Gunakan backup dan uji pemulihan backup.
 - Tentukan kebijakan retensi dan penghapusan data.
@@ -148,7 +170,8 @@ Recommended controls:
 - [x] Error response tidak membocorkan detail internal.
 - [x] Logging terstruktur tidak menyimpan password/token (perlu diverifikasi ulang pada setiap fitur baru).
 - [ ] Kebijakan retensi log ditentukan.
-- [ ] CORS dibatasi.
+- [x] CORS dibatasi (`CORS_ALLOWED_ORIGINS`) dan header keamanan dikirim.
+- [x] Koneksi database terenkripsi di production (`DB_SSLMODE` require/verify-ca/verify-full dipaksakan saat start).
 - [ ] Database least privilege.
 - [ ] Backup dan restore diuji.
 - [ ] Dependency dan image deployment diperbarui.
@@ -168,7 +191,7 @@ Review dilakukan dengan membaca kode seluruh modul (auth, workspaces, projects, 
 | 6 | Rendah | Anggota ditambahkan langsung tanpa persetujuan; respons mengungkap email terdaftar | Terbuka: fitur undangan (ROADMAP) |
 | 7 | Rendah | Daftar workspace/project/anggota/aktivitas tanpa pagination | **Diperbaiki**: `page`/`limit` dengan batas maks. 100 di semua endpoint daftar (`platform/pagination`); nilai tidak valid ditolak 400 |
 | 8 | Rendah | Token tidak dapat dicabut (24 jam) | **Diperbaiki**: access token 15 menit + refresh token tersimpan ter-hash, rotasi sekali pakai, deteksi pemakaian ulang, logout dan logout-all. Access token yang sudah terbit tetap berlaku sampai kedaluwarsa (maks. 15 menit) |
-| 9 | Info | `DB_SSLMODE` kosong = `prefer` | Terbuka: wajibkan `require`/`verify-full` di produksi |
+| 9 | Info | `DB_SSLMODE` kosong = `prefer` | **Diperbaiki**: di `APP_ENV=production`, aplikasi menolak start kecuali `require`/`verify-ca`/`verify-full`, atau `ALLOW_INSECURE_DB=true` secara eksplisit (dengan peringatan log) |
 | 10 | Sedang | **Ditemukan setelah review**, saat menguji aplikasi sebagai container: DSN database dirakit tanpa tanda kutip (`password=%s dbname=%s`). Password kosong membuat `dbname` hilang (tersambung ke database default), password dengan spasi/kutip/backslash terpotong atau rusak, dan password berisi `host=...` dapat mengganti host tujuan koneksi | **Diperbaiki**: setiap nilai dikutip dan di-escape (`buildDSN`), dengan test yang mem-parse DSN memakai parser pgx |
 
 Yang diverifikasi aman: otorisasi selalu dari database (bukan token); tidak ada IDOR antar-task/komentar/project; semua SQL berparameter; JWT dikunci ke HS256 dengan issuer dan expiry wajib; log tanpa password, token, body, query string, atau nilai parameter SQL.

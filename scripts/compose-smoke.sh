@@ -25,6 +25,8 @@ export JWT_SECRET="$(rand 48)"
 export APP_PORT="${SMOKE_PORT:-18091}"
 export DB_HOST_PORT="${SMOKE_DB_PORT:-55499}"
 export APP_ENV=production
+# Compose memakai database di jaringan internal tanpa TLS; di production itu harus diizinkan eksplisit.
+export ALLOW_INSECURE_DB=true
 BASE="http://127.0.0.1:$APP_PORT"
 
 dc() { docker compose -p "$PROJECT" --env-file "$EMPTY_ENV" "$@"; }
