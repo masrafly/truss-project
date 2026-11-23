@@ -20,6 +20,7 @@ import (
 	"truss-project/internal/modules/tasks/domain"
 	"truss-project/internal/modules/tasks/handler"
 	"truss-project/internal/modules/tasks/usecase"
+	"truss-project/internal/platform/pagination"
 )
 
 func init() { gin.SetMode(gin.TestMode) }
@@ -38,6 +39,7 @@ type fakeUC struct {
 	gotCreate                    usecase.CreateInput
 	gotUpdate                    usecase.UpdateInput
 	gotList                      usecase.ListInput
+	gotPage, gotLimit            int
 }
 
 func (f *fakeUC) Create(_ context.Context, u, p string, in usecase.CreateInput) (*domain.TaskView, error) {
@@ -70,10 +72,18 @@ func (f *fakeUC) Delete(_ context.Context, u, t string) error {
 	return f.err
 }
 
-func (f *fakeUC) Activities(_ context.Context, u, t string) ([]domain.Activity, error) {
+func (f *fakeUC) Activities(
+	_ context.Context,
+	u, t string,
+	page, limit int,
+) (*pagination.Result[domain.Activity], error) {
 	f.calls++
 	f.gotUser, f.gotTask = u, t
-	return f.acts, f.err
+	f.gotPage, f.gotLimit = page, limit
+	if f.err != nil {
+		return nil, f.err
+	}
+	return pagination.NewResult(f.acts, int64(len(f.acts)), pagination.Params{Page: 1, Limit: 50}), nil
 }
 
 type fakeValidator struct{}
@@ -368,6 +378,25 @@ func TestActivities_Response(t *testing.T) {
 	}
 	if actor := item["actor"].(map[string]any); actor["user_id"] != creatorID.String() || actor["name"] != "Ani" {
 		t.Errorf("actor = %v", actor)
+	}
+}
+
+func TestActivities_PassesPaginationAndReturnsMeta(t *testing.T) {
+	uc := &fakeUC{}
+	w := do(newRouter(uc, nil), "GET", taskPath+"/activities?page=2&limit=10", "", authAs)
+	if w.Code != http.StatusOK || uc.gotPage != 2 || uc.gotLimit != 10 {
+		t.Fatalf("status %d, page/limit = %d/%d", w.Code, uc.gotPage, uc.gotLimit)
+	}
+	if _, ok := decode(t, w)["meta"].(map[string]any); !ok {
+		t.Errorf("respons harus memuat meta: %s", w.Body)
+	}
+}
+
+func TestActivities_NonNumericPaginationIs400(t *testing.T) {
+	uc := &fakeUC{}
+	w := do(newRouter(uc, nil), "GET", taskPath+"/activities?page=abc", "", authAs)
+	if w.Code != http.StatusBadRequest || uc.calls != 0 {
+		t.Fatalf("status %d, calls %d", w.Code, uc.calls)
 	}
 }
 

@@ -64,7 +64,7 @@
 - [ ] Ubah role anggota dan transfer kepemilikan (diperlukan agar Owner dapat keluar dari workspace).
 - [ ] Hapus workspace oleh Owner.
 - [x] Keluarnya anggota dari workspace ikut menghapus keanggotaan project (atomik); Owner project ditolak dengan 409.
-- [ ] Pagination untuk `GET /workspaces`.
+- [x] Pagination untuk `GET /workspaces` dan daftar anggota workspace.
 
 ## Phase 5 — Project
 
@@ -80,7 +80,7 @@
 - [ ] Jalankan integration test anggota project (termasuk uji kunci AddMember vs keluar workspace) terhadap PostgreSQL 18.
 - [x] Menghapus anggota project / keluar workspace melepas assignee task-nya (atomik, tercatat di riwayat).
 - [ ] Transfer kepemilikan project (agar Owner project dapat keluar dari workspace).
-- [ ] Pagination untuk daftar project.
+- [x] Pagination untuk daftar project dan anggota project; riwayat aktivitas task juga dipaginasi.
 - [x] Project `archived` menjadi read-only untuk task (409); `completed` tetap dapat diubah.
 
 ## Phase 6 — Task Management

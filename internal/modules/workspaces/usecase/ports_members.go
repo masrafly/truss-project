@@ -21,7 +21,8 @@ type MemberRepository interface {
 	AddMember(ctx context.Context, workspaceID, userID uuid.UUID, role domain.Role) (time.Time, error)
 
 	// ListMembers: Owner lebih dulu, lalu Admin, lalu Member; di dalam peran, urut waktu bergabung.
-	ListMembers(ctx context.Context, workspaceID uuid.UUID) ([]domain.Member, error)
+	// Mengembalikan satu halaman beserta total seluruh anggota.
+	ListMembers(ctx context.Context, workspaceID uuid.UUID, limit, offset int) ([]domain.Member, int64, error)
 
 	// RemoveMember menghapus keanggotaan workspace sekaligus keanggotaan project user
 	// di workspace tersebut, dan melepasnya dari task (dicatat atas nama actorID), secara

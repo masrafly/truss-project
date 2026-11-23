@@ -28,6 +28,7 @@ type fakeRepo struct {
 
 	createCalls, listCalls, updateCalls, deleteCalls, wsRoleCalls int
 	lastListWS                                                    *uuid.UUID
+	lastLimit, lastOffset                                         int
 	lastUpdated                                                   domain.Project
 	lastDeleted                                                   uuid.UUID
 }
@@ -70,14 +71,20 @@ func (r *fakeRepo) CreateWithOwner(_ context.Context, p *domain.Project) error {
 	return nil
 }
 
-func (r *fakeRepo) ListAccessible(_ context.Context, uid uuid.UUID, wid *uuid.UUID) ([]domain.ProjectAccess, error) {
+func (r *fakeRepo) ListAccessible(
+	_ context.Context,
+	uid uuid.UUID,
+	wid *uuid.UUID,
+	limit, offset int,
+) ([]domain.ProjectAccess, int64, error) {
 	r.listCalls++
 	r.lastListWS = wid
+	r.lastLimit, r.lastOffset = limit, offset
 	if r.listErr != nil {
-		return nil, r.listErr
+		return nil, 0, r.listErr
 	}
 	if r.listRaw != nil {
-		return r.listRaw, nil
+		return r.listRaw, int64(len(r.listRaw)), nil
 	}
 	var out []domain.ProjectAccess
 	for id, p := range r.projects {
@@ -90,7 +97,7 @@ func (r *fakeRepo) ListAccessible(_ context.Context, uid uuid.UUID, wid *uuid.UU
 		}
 		out = append(out, domain.ProjectAccess{Project: p, Access: a})
 	}
-	return out, nil
+	return out, int64(len(out)), nil
 }
 
 func (r *fakeRepo) FindWithAccess(_ context.Context, pid, uid uuid.UUID) (*domain.ProjectAccess, error) {
@@ -330,12 +337,12 @@ func TestListInWorkspace_VisibilityPerRole(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newFixture()
-			got, err := f.uc.ListInWorkspace(ctx, tc.pick(f).String(), f.wid.String())
+			res, err := f.uc.ListInWorkspace(ctx, tc.pick(f).String(), f.wid.String(), 0, 0)
 			if err != nil {
 				t.Fatal(err)
 			}
-			if (len(got) == 1) != tc.visible {
-				t.Errorf("visible = %v, dapat %d project", tc.visible, len(got))
+			if (len(res.Items) == 1) != tc.visible {
+				t.Errorf("visible = %v, dapat %d project", tc.visible, len(res.Items))
 			}
 			if f.repo.lastListWS == nil || *f.repo.lastListWS != f.wid {
 				t.Error("daftar harus dibatasi pada workspace yang diminta")
@@ -346,7 +353,7 @@ func TestListInWorkspace_VisibilityPerRole(t *testing.T) {
 
 func TestListInWorkspace_NonMemberGets404(t *testing.T) {
 	f := newFixture()
-	_, err := f.uc.ListInWorkspace(ctx, f.outsider.String(), f.wid.String())
+	_, err := f.uc.ListInWorkspace(ctx, f.outsider.String(), f.wid.String(), 0, 0)
 	if !errors.Is(err, domain.ErrWorkspaceNotFound) {
 		t.Fatalf("dapat %v", err)
 	}
@@ -357,17 +364,17 @@ func TestListInWorkspace_NonMemberGets404(t *testing.T) {
 
 func TestListAll_NoWorkspaceFilterAndNonNil(t *testing.T) {
 	f := newFixture()
-	got, err := f.uc.ListAll(ctx, f.outsider.String())
+	res, err := f.uc.ListAll(ctx, f.outsider.String(), 0, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got == nil || len(got) != 0 {
-		t.Errorf("harapannya slice kosong non-nil, dapat %#v", got)
+	if res.Items == nil || len(res.Items) != 0 {
+		t.Errorf("harapannya slice kosong non-nil, dapat %#v", res.Items)
 	}
 	if f.repo.lastListWS != nil {
 		t.Error("ListAll tidak boleh memfilter workspace")
 	}
-	if _, err := f.uc.ListAll(ctx, "x"); !errors.Is(err, domain.ErrUnauthenticated) {
+	if _, err := f.uc.ListAll(ctx, "x", 0, 0); !errors.Is(err, domain.ErrUnauthenticated) {
 		t.Errorf("user ID rusak: dapat %v", err)
 	}
 }
@@ -382,12 +389,12 @@ func TestList_DefenseInDepthFiltersNonViewable(t *testing.T) {
 		{Project: p, Access: domain.Access{ProjectRole: domain.ProjectOwner}},      // bukan anggota workspace
 		{Project: p, Access: domain.Access{WorkspaceRole: domain.WorkspaceAdmin}},  // boleh
 	}
-	got, err := f.uc.ListAll(ctx, f.wsPlain.String())
+	res, err := f.uc.ListAll(ctx, f.wsPlain.String(), 0, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(got) != 1 || got[0].WorkspaceRole != domain.WorkspaceAdmin {
-		t.Errorf("hanya yang boleh dilihat yang lolos, dapat %+v", got)
+	if len(res.Items) != 1 || res.Items[0].WorkspaceRole != domain.WorkspaceAdmin {
+		t.Errorf("hanya yang boleh dilihat yang lolos, dapat %+v", res.Items)
 	}
 }
 
@@ -395,10 +402,10 @@ func TestList_ErrorsPassedThrough(t *testing.T) {
 	f := newFixture()
 	boom := errors.New("db mati")
 	f.repo.listErr = boom
-	if _, err := f.uc.ListAll(ctx, f.wsOwner.String()); !errors.Is(err, boom) {
+	if _, err := f.uc.ListAll(ctx, f.wsOwner.String(), 0, 0); !errors.Is(err, boom) {
 		t.Errorf("dapat %v", err)
 	}
-	if _, err := f.uc.ListInWorkspace(ctx, f.wsOwner.String(), f.wid.String()); !errors.Is(err, boom) {
+	if _, err := f.uc.ListInWorkspace(ctx, f.wsOwner.String(), f.wid.String(), 0, 0); !errors.Is(err, boom) {
 		t.Errorf("dapat %v", err)
 	}
 }
@@ -598,5 +605,26 @@ func TestDelete_RepositoryErrorPassedThrough(t *testing.T) {
 	f.repo.deleteErr = boom
 	if err := f.uc.Delete(ctx, f.pOwner.String(), f.pid.String()); !errors.Is(err, boom) {
 		t.Fatalf("dapat %v", err)
+	}
+}
+
+func TestListProjects_PaginationDefaultsAndValidation(t *testing.T) {
+	f := newFixture()
+	if _, err := f.uc.ListAll(ctx, f.wsOwner.String(), 0, 0); err != nil ||
+		f.repo.lastLimit != 20 || f.repo.lastOffset != 0 {
+		t.Fatalf("default: err=%v limit=%d offset=%d", err, f.repo.lastLimit, f.repo.lastOffset)
+	}
+	if _, err := f.uc.ListInWorkspace(ctx, f.wsOwner.String(), f.wid.String(), 3, 10); err != nil ||
+		f.repo.lastLimit != 10 || f.repo.lastOffset != 20 {
+		t.Fatalf("halaman 3: err=%v limit=%d offset=%d", err, f.repo.lastLimit, f.repo.lastOffset)
+	}
+	calls := f.repo.listCalls
+	for _, c := range [][2]int{{-1, 10}, {1, -1}, {1, 101}} {
+		if _, err := f.uc.ListAll(ctx, f.wsOwner.String(), c[0], c[1]); !errors.Is(err, domain.ErrInvalidInput) {
+			t.Errorf("page=%d limit=%d: dapat %v", c[0], c[1], err)
+		}
+	}
+	if f.repo.listCalls != calls {
+		t.Error("repository tidak boleh dipanggil untuk pagination tidak valid")
 	}
 }

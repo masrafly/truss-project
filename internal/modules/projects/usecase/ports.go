@@ -23,7 +23,12 @@ type ProjectRepository interface {
 
 	// ListAccessible mengembalikan project yang boleh dilihat user (lihat
 	// domain.Access.CanView), terbaru lebih dulu. workspaceID nil = semua workspace.
-	ListAccessible(ctx context.Context, userID uuid.UUID, workspaceID *uuid.UUID) ([]domain.ProjectAccess, error)
+	ListAccessible(
+		ctx context.Context,
+		userID uuid.UUID,
+		workspaceID *uuid.UUID,
+		limit, offset int,
+	) ([]domain.ProjectAccess, int64, error)
 
 	// FindWithAccess mengembalikan project beserta peran user (kosong bila bukan anggota).
 	// Tidak melakukan otorisasi; itu tugas use case.

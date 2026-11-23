@@ -10,9 +10,16 @@ import (
 	"github.com/google/uuid"
 
 	"truss-project/internal/modules/workspaces/domain"
+	"truss-project/internal/platform/pagination"
 )
 
-const maxEmailLength = 255 // sesuai VARCHAR(255)
+const (
+	maxEmailLength = 255 // sesuai VARCHAR(255)
+
+	// Pagination daftar (workspace dan anggota).
+	defaultListLimit = 20
+	maxListLimit     = 100
+)
 
 type MemberUseCase struct {
 	members MemberRepository
@@ -107,20 +114,25 @@ func (u *MemberUseCase) Add(
 }
 
 // List menampilkan anggota workspace. Semua anggota boleh melihat; non-anggota mendapat 404.
-func (u *MemberUseCase) List(ctx context.Context, actorID, workspaceID string) ([]domain.Member, error) {
+func (u *MemberUseCase) List(
+	ctx context.Context,
+	actorID, workspaceID string,
+	page, limit int,
+) (*pagination.Result[domain.Member], error) {
 	_, wid, _, err := u.callerRole(ctx, actorID, workspaceID)
 	if err != nil {
 		return nil, err
 	}
+	p, err := pagination.New(page, limit, defaultListLimit, maxListLimit)
+	if err != nil {
+		return nil, domain.ErrInvalidInput
+	}
 
-	list, err := u.members.ListMembers(ctx, wid)
+	list, total, err := u.members.ListMembers(ctx, wid, p.Limit, p.Offset)
 	if err != nil {
 		return nil, err
 	}
-	if list == nil {
-		list = []domain.Member{}
-	}
-	return list, nil
+	return pagination.NewResult(list, total, p), nil
 }
 
 // Remove menghapus anggota (atau keluar dari workspace jika target adalah pemanggil sendiri).

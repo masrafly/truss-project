@@ -381,7 +381,19 @@ type activityRow struct {
 	CreatedAt time.Time `gorm:"column:created_at"`
 }
 
-func (r *TaskGormRepository) ListActivities(ctx context.Context, taskID uuid.UUID) ([]domain.Activity, error) {
+func (r *TaskGormRepository) ListActivities(
+	ctx context.Context,
+	taskID uuid.UUID,
+	limit, offset int,
+) ([]domain.Activity, int64, error) {
+	var total int64
+	if err := r.db.WithContext(ctx).
+		Table("task_activities").
+		Where("task_id = ?", taskID).
+		Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+
 	var rows []activityRow
 	err := r.db.WithContext(ctx).
 		Table("task_activities AS a").
@@ -391,9 +403,11 @@ func (r *TaskGormRepository) ListActivities(ctx context.Context, taskID uuid.UUI
 		Joins("LEFT JOIN users AS u ON u.internal_id = a.actor_id").
 		Where("a.task_id = ?", taskID).
 		Order("a.created_at, a.internal_id").
+		Limit(limit).
+		Offset(offset).
 		Scan(&rows).Error
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 
 	out := make([]domain.Activity, 0, len(rows))
@@ -410,7 +424,7 @@ func (r *TaskGormRepository) ListActivities(ctx context.Context, taskID uuid.UUI
 		a.Actor = &ref
 		out = append(out, a)
 	}
-	return out, nil
+	return out, total, nil
 }
 
 // insertActivities menyimpan aktivitas. created_at memakai clock_timestamp() (bukan

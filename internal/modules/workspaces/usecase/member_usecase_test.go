@@ -22,6 +22,7 @@ type fakeMemberRepo struct {
 	roleErr, addErr, listErr, removeErr error
 
 	addCalls, removeCalls, roleCalls, listCalls int
+	lastLimit, lastOffset                       int
 	lastAdded                                   struct {
 		wid, uid uuid.UUID
 		role     domain.Role
@@ -70,17 +71,22 @@ func (r *fakeMemberRepo) AddMember(_ context.Context, wid, uid uuid.UUID, role d
 	return time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC), nil
 }
 
-func (r *fakeMemberRepo) ListMembers(_ context.Context, wid uuid.UUID) ([]domain.Member, error) {
+func (r *fakeMemberRepo) ListMembers(
+	_ context.Context,
+	wid uuid.UUID,
+	limit, offset int,
+) ([]domain.Member, int64, error) {
 	r.listCalls++
+	r.lastLimit, r.lastOffset = limit, offset
 	if r.listErr != nil {
-		return nil, r.listErr
+		return nil, 0, r.listErr
 	}
 	var out []domain.Member
 	for uid, role := range r.roles[wid] {
 		ref := r.names[uid]
 		out = append(out, domain.Member{UserID: uid, Name: ref.Name, Email: ref.Email, Role: role})
 	}
-	return out, nil
+	return out, int64(len(out)), nil
 }
 
 func (r *fakeMemberRepo) RemoveMember(_ context.Context, wid, uid, actor uuid.UUID) error {
@@ -352,13 +358,13 @@ func TestList_AnyMemberCanSee(t *testing.T) {
 	f.repo.names[f.owner] = domain.UserRef{Name: "Owner", Email: "owner@example.com"}
 
 	for name, uid := range map[string]uuid.UUID{"owner": f.owner, "admin": f.admin, "member": f.member} {
-		got, err := f.uc.List(ctx, uid.String(), f.wid.String())
+		res, err := f.uc.List(ctx, uid.String(), f.wid.String(), 0, 0)
 		if err != nil {
 			t.Errorf("%s: %v", name, err)
 			continue
 		}
-		if len(got) != 3 {
-			t.Errorf("%s harus melihat 3 anggota, dapat %d", name, len(got))
+		if len(res.Items) != 3 || res.Total != 3 {
+			t.Errorf("%s harus melihat 3 anggota, dapat %d (total %d)", name, len(res.Items), res.Total)
 		}
 	}
 }
@@ -366,7 +372,7 @@ func TestList_AnyMemberCanSee(t *testing.T) {
 func TestList_NonMemberGets404(t *testing.T) {
 	f := newFixture()
 
-	_, err := f.uc.List(ctx, f.other.String(), f.wid.String())
+	_, err := f.uc.List(ctx, f.other.String(), f.wid.String(), 0, 0)
 
 	if !errors.Is(err, domain.ErrWorkspaceNotFound) {
 		t.Fatalf("harapannya ErrWorkspaceNotFound, dapat %v", err)
@@ -384,19 +390,19 @@ func TestMemberList_EmptyIsNonNilSlice(t *testing.T) {
 	repo := &emptyListRepo{fakeMemberRepo: f.repo}
 	uc := usecase.NewMemberUseCase(repo, f.dir, nil)
 
-	got, err := uc.List(ctx, f.owner.String(), f.wid.String())
+	res, err := uc.List(ctx, f.owner.String(), f.wid.String(), 0, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got == nil || len(got) != 0 {
-		t.Errorf("harapannya slice kosong non-nil, dapat %#v", got)
+	if res.Items == nil || len(res.Items) != 0 {
+		t.Errorf("harapannya slice kosong non-nil, dapat %#v", res.Items)
 	}
 }
 
 type emptyListRepo struct{ *fakeMemberRepo }
 
-func (emptyListRepo) ListMembers(context.Context, uuid.UUID) ([]domain.Member, error) {
-	return nil, nil
+func (emptyListRepo) ListMembers(context.Context, uuid.UUID, int, int) ([]domain.Member, int64, error) {
+	return nil, 0, nil
 }
 
 func TestList_ErrorsPassedThrough(t *testing.T) {
@@ -404,7 +410,7 @@ func TestList_ErrorsPassedThrough(t *testing.T) {
 	boom := errors.New("db mati")
 	f.repo.listErr = boom
 
-	if _, err := f.uc.List(ctx, f.owner.String(), f.wid.String()); !errors.Is(err, boom) {
+	if _, err := f.uc.List(ctx, f.owner.String(), f.wid.String(), 0, 0); !errors.Is(err, boom) {
 		t.Fatalf("err = %v", err)
 	}
 }
@@ -598,4 +604,19 @@ func TestRemove_InfrastructureErrorsAreNotDisguised(t *testing.T) {
 			t.Fatalf("err = %v", err)
 		}
 	})
+}
+
+func TestMemberList_PaginationDefaultsAndValidation(t *testing.T) {
+	f := newFixture()
+	if _, err := f.uc.List(ctx, f.owner.String(), f.wid.String(), 2, 5); err != nil ||
+		f.repo.lastLimit != 5 || f.repo.lastOffset != 5 {
+		t.Fatalf("err=%v limit=%d offset=%d", err, f.repo.lastLimit, f.repo.lastOffset)
+	}
+	before := f.repo.listCalls
+	if _, err := f.uc.List(ctx, f.owner.String(), f.wid.String(), 1, 101); !errors.Is(err, domain.ErrInvalidInput) {
+		t.Fatalf("limit 101 harus ErrInvalidInput, dapat %v", err)
+	}
+	if f.repo.listCalls != before {
+		t.Error("repository tidak boleh dipanggil untuk pagination tidak valid")
+	}
 }

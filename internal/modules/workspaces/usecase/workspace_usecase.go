@@ -12,6 +12,7 @@ import (
 	"github.com/google/uuid"
 
 	"truss-project/internal/modules/workspaces/domain"
+	"truss-project/internal/platform/pagination"
 )
 
 const (
@@ -75,21 +76,26 @@ func (u *WorkspaceUseCase) Create(
 	return &domain.WorkspaceAccess{Workspace: *w, Role: domain.RoleOwner}, nil
 }
 
-// List mengembalikan hanya workspace tempat user menjadi anggota.
-func (u *WorkspaceUseCase) List(ctx context.Context, userID string) ([]domain.WorkspaceAccess, error) {
+// List mengembalikan hanya workspace tempat user menjadi anggota, satu halaman per panggilan.
+func (u *WorkspaceUseCase) List(
+	ctx context.Context,
+	userID string,
+	page, limit int,
+) (*pagination.Result[domain.WorkspaceAccess], error) {
 	uid, err := uuid.Parse(userID)
 	if err != nil {
 		return nil, domain.ErrUnauthenticated
 	}
+	p, err := pagination.New(page, limit, defaultListLimit, maxListLimit)
+	if err != nil {
+		return nil, domain.ErrInvalidInput
+	}
 
-	list, err := u.repo.ListByMember(ctx, uid)
+	list, total, err := u.repo.ListByMember(ctx, uid, p.Limit, p.Offset)
 	if err != nil {
 		return nil, err
 	}
-	if list == nil {
-		list = []domain.WorkspaceAccess{}
-	}
-	return list, nil
+	return pagination.NewResult(list, total, p), nil
 }
 
 // Get mengembalikan detail workspace untuk anggotanya. Non-anggota, workspace yang

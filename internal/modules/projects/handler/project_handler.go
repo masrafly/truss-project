@@ -12,13 +12,14 @@ import (
 	"truss-project/internal/middleware"
 	"truss-project/internal/modules/projects/domain"
 	"truss-project/internal/modules/projects/usecase"
+	"truss-project/internal/platform/pagination"
 )
 
 // projectUseCase adalah interface yang dibutuhkan handler (mudah di-mock).
 type projectUseCase interface {
 	Create(ctx context.Context, userID, workspaceID, name string, description *string) (*domain.ProjectAccess, error)
-	ListInWorkspace(ctx context.Context, userID, workspaceID string) ([]domain.ProjectAccess, error)
-	ListAll(ctx context.Context, userID string) ([]domain.ProjectAccess, error)
+	ListInWorkspace(ctx context.Context, userID, workspaceID string, page, limit int) (*pagination.Result[domain.ProjectAccess], error)
+	ListAll(ctx context.Context, userID string, page, limit int) (*pagination.Result[domain.ProjectAccess], error)
 	Get(ctx context.Context, userID, projectID string) (*domain.ProjectAccess, error)
 	Update(ctx context.Context, userID, projectID string, in usecase.UpdateInput) (*domain.ProjectAccess, error)
 	Delete(ctx context.Context, userID, projectID string) error
@@ -73,12 +74,17 @@ func (h *ProjectHandler) ListInWorkspace(c *gin.Context) {
 	if !ok {
 		return
 	}
-	list, err := h.uc.ListInWorkspace(c.Request.Context(), userID, c.Param("id"))
+	page, limit, okQuery := pagination.FromQuery(c)
+	if !okQuery {
+		h.writeError(c, domain.ErrInvalidInput)
+		return
+	}
+	res, err := h.uc.ListInWorkspace(c.Request.Context(), userID, c.Param("id"), page, limit)
 	if err != nil {
 		h.writeError(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"data": toProjectResponses(list)})
+	c.JSON(http.StatusOK, gin.H{"data": toProjectResponses(res.Items), "meta": res.Meta()})
 }
 
 func (h *ProjectHandler) ListAll(c *gin.Context) {
@@ -86,12 +92,17 @@ func (h *ProjectHandler) ListAll(c *gin.Context) {
 	if !ok {
 		return
 	}
-	list, err := h.uc.ListAll(c.Request.Context(), userID)
+	page, limit, okQuery := pagination.FromQuery(c)
+	if !okQuery {
+		h.writeError(c, domain.ErrInvalidInput)
+		return
+	}
+	res, err := h.uc.ListAll(c.Request.Context(), userID, page, limit)
 	if err != nil {
 		h.writeError(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"data": toProjectResponses(list)})
+	c.JSON(http.StatusOK, gin.H{"data": toProjectResponses(res.Items), "meta": res.Meta()})
 }
 
 func (h *ProjectHandler) Get(c *gin.Context) {

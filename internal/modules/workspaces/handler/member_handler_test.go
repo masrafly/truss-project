@@ -19,6 +19,7 @@ import (
 	"truss-project/internal/middleware"
 	"truss-project/internal/modules/workspaces/domain"
 	"truss-project/internal/modules/workspaces/handler"
+	"truss-project/internal/platform/pagination"
 )
 
 // ---------- fake ----------
@@ -31,6 +32,7 @@ type fakeMemberUC struct {
 	addCalls, listCalls, removeCalls int
 	gotActor, gotWS, gotEmail        string
 	gotRole, gotTarget               string
+	gotPage, gotLimit                int
 }
 
 func (f *fakeMemberUC) Add(ctx context.Context, actorID, wsID, email, role string) (*domain.Member, error) {
@@ -39,10 +41,19 @@ func (f *fakeMemberUC) Add(ctx context.Context, actorID, wsID, email, role strin
 	return f.addFn(ctx, actorID, wsID, email, role)
 }
 
-func (f *fakeMemberUC) List(ctx context.Context, actorID, wsID string) ([]domain.Member, error) {
+func (f *fakeMemberUC) List(
+	ctx context.Context,
+	actorID, wsID string,
+	page, limit int,
+) (*pagination.Result[domain.Member], error) {
 	f.listCalls++
 	f.gotActor, f.gotWS = actorID, wsID
-	return f.listFn(ctx, actorID, wsID)
+	f.gotPage, f.gotLimit = page, limit
+	items, err := f.listFn(ctx, actorID, wsID)
+	if err != nil {
+		return nil, err
+	}
+	return pagination.NewResult(items, int64(len(items)), pagination.Params{Page: 1, Limit: 20}), nil
 }
 
 func (f *fakeMemberUC) Remove(ctx context.Context, actorID, wsID, targetID string) error {
@@ -315,6 +326,30 @@ func TestForbiddenAndNotFoundAreDistinctStatuses(t *testing.T) {
 }
 
 // ---------- List ----------
+
+func TestListMembers_PassesPaginationAndReturnsMeta(t *testing.T) {
+	uc := &fakeMemberUC{listFn: func(context.Context, string, string) ([]domain.Member, error) {
+		return []domain.Member{*sampleMember(domain.RoleOwner)}, nil
+	}}
+
+	w := do(newMemberRouter(uc, nil), http.MethodGet, membersPath+"?page=2&limit=5", "", "Bearer valid-a")
+
+	if w.Code != http.StatusOK || uc.gotPage != 2 || uc.gotLimit != 5 {
+		t.Fatalf("status = %d, page/limit = %d/%d", w.Code, uc.gotPage, uc.gotLimit)
+	}
+	if _, ok := decode(t, w)["meta"].(map[string]any); !ok {
+		t.Errorf("respons harus memuat meta: %s", w.Body.String())
+	}
+}
+
+func TestListMembers_NonNumericPaginationIs400(t *testing.T) {
+	uc := &fakeMemberUC{}
+	w := do(newMemberRouter(uc, nil), http.MethodGet, membersPath+"?limit=x", "", "Bearer valid-a")
+
+	if w.Code != http.StatusBadRequest || uc.listCalls != 0 {
+		t.Fatalf("status = %d, listCalls = %d", w.Code, uc.listCalls)
+	}
+}
 
 func TestListMembers_Success(t *testing.T) {
 	uc := &fakeMemberUC{listFn: func(context.Context, string, string) ([]domain.Member, error) {

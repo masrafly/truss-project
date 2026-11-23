@@ -6,6 +6,7 @@ package repository_test
 
 import (
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -161,7 +162,7 @@ func TestListMembers_OrderedByRoleThenJoinTimeWithProfile(t *testing.T) {
 		time.Sleep(15 * time.Millisecond)
 	}
 
-	got, err := repo.ListMembers(ctx, w.ID)
+	got, _, err := repo.ListMembers(ctx, w.ID, 100, 0)
 	if err != nil {
 		t.Fatalf("ListMembers: %v", err)
 	}
@@ -198,7 +199,7 @@ func TestListMembers_OnlyThisWorkspace(t *testing.T) {
 		}
 	}
 
-	got, err := repo.ListMembers(ctx, w1.ID)
+	got, _, err := repo.ListMembers(ctx, w1.ID, 100, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -220,19 +221,49 @@ func TestListMembers_HidesSoftDeletedUsers(t *testing.T) {
 	}
 	pgtest.Exec(t, db, "UPDATE users SET deleted_at = NOW() WHERE internal_id = ?", gone)
 
-	got, err := repo.ListMembers(ctx, w.ID)
+	got, total, err := repo.ListMembers(ctx, w.ID, 100, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(got) != 1 || got[0].UserID != owner {
 		t.Fatalf("user yang di-soft-delete tidak boleh tampil, dapat %+v", got)
 	}
+	if total != 1 {
+		t.Errorf("total harus konsisten dengan daftar (1), dapat %d", total)
+	}
+}
+
+func TestListMembers_PagesKeepOrderAndTotal(t *testing.T) {
+	repo, db := setup(t)
+	owner := insertUser(t, db, "owner@example.com")
+	w := newWS("WS", owner)
+	if err := repo.CreateWithOwner(ctx, w); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 4; i++ {
+		u := insertUser(t, db, fmt.Sprintf("m%d@example.com", i))
+		if _, err := repo.AddMember(ctx, w.ID, u, domain.RoleMember); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	first, total, err := repo.ListMembers(ctx, w.ID, 2, 0)
+	if err != nil || total != 5 || len(first) != 2 || first[0].UserID != owner {
+		t.Fatalf("halaman 1: err=%v total=%d len=%d", err, total, len(first))
+	}
+	last, total, err := repo.ListMembers(ctx, w.ID, 2, 4)
+	if err != nil || total != 5 || len(last) != 1 {
+		t.Fatalf("halaman 3: err=%v total=%d len=%d", err, total, len(last))
+	}
+	if last[0].UserID == owner || last[0].UserID == first[0].UserID || last[0].UserID == first[1].UserID {
+		t.Error("halaman tidak boleh berisi anggota yang sama dengan halaman lain")
+	}
 }
 
 func TestListMembers_UnknownWorkspaceReturnsEmptyNonNil(t *testing.T) {
 	repo, _ := setup(t)
 
-	got, err := repo.ListMembers(ctx, uuid.New())
+	got, _, err := repo.ListMembers(ctx, uuid.New(), 100, 0)
 
 	if err != nil {
 		t.Fatal(err)
@@ -322,7 +353,7 @@ func TestRemoveMember_CancelledContextReturnsRealError(t *testing.T) {
 	if _, err := repo.AddMember(cctx, w.ID, uuid.New(), domain.RoleMember); err == nil {
 		t.Error("AddMember dengan context dibatalkan harus error")
 	}
-	if _, err := repo.ListMembers(cctx, w.ID); err == nil {
+	if _, _, err := repo.ListMembers(cctx, w.ID, 100, 0); err == nil {
 		t.Error("ListMembers dengan context dibatalkan harus error")
 	}
 }

@@ -101,18 +101,28 @@ func (r *WorkspaceGormRepository) CreateWithOwner(ctx context.Context, w *domain
 func (r *WorkspaceGormRepository) ListByMember(
 	ctx context.Context,
 	userID uuid.UUID,
-) ([]domain.WorkspaceAccess, error) {
-	var rows []accessRow
+	limit, offset int,
+) ([]domain.WorkspaceAccess, int64, error) {
+	var total int64
+	if err := r.db.WithContext(ctx).
+		Table("workspace_members").
+		Where("user_id = ?", userID).
+		Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
 
+	var rows []accessRow
 	err := r.db.WithContext(ctx).
 		Table("workspaces AS w").
 		Select("w.internal_id, w.name, w.description, w.created_by, w.created_at, w.updated_at, wm.role").
 		Joins("JOIN workspace_members AS wm ON wm.workspace_id = w.internal_id").
 		Where("wm.user_id = ?", userID).
 		Order("w.created_at DESC, w.internal_id").
+		Limit(limit).
+		Offset(offset).
 		Scan(&rows).Error
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 
 	out := make([]domain.WorkspaceAccess, 0, len(rows))
@@ -129,7 +139,7 @@ func (r *WorkspaceGormRepository) ListByMember(
 			Role: domain.Role(row.Role),
 		})
 	}
-	return out, nil
+	return out, total, nil
 }
 
 func (r *WorkspaceGormRepository) FindByID(ctx context.Context, id uuid.UUID) (*domain.Workspace, error) {

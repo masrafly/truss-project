@@ -17,6 +17,7 @@ import (
 	"truss-project/internal/middleware"
 	"truss-project/internal/modules/projects/domain"
 	"truss-project/internal/modules/projects/handler"
+	"truss-project/internal/platform/pagination"
 )
 
 type fakeMemberUC struct {
@@ -25,6 +26,7 @@ type fakeMemberUC struct {
 	removeFn func() error
 
 	calls                                              int
+	gotPage, gotLimit                                  int
 	gotActor, gotProject, gotEmail, gotRole, gotTarget string
 }
 
@@ -34,10 +36,19 @@ func (f *fakeMemberUC) Add(_ context.Context, actor, pid, email, role string) (*
 	return f.addFn()
 }
 
-func (f *fakeMemberUC) List(_ context.Context, actor, pid string) ([]domain.Member, error) {
+func (f *fakeMemberUC) List(
+	_ context.Context,
+	actor, pid string,
+	page, limit int,
+) (*pagination.Result[domain.Member], error) {
 	f.calls++
 	f.gotActor, f.gotProject = actor, pid
-	return f.listFn()
+	f.gotPage, f.gotLimit = page, limit
+	items, err := f.listFn()
+	if err != nil {
+		return nil, err
+	}
+	return pagination.NewResult(items, int64(len(items)), pagination.Params{Page: 1, Limit: 20}), nil
 }
 
 func (f *fakeMemberUC) Remove(_ context.Context, actor, pid, target string) error {
@@ -156,6 +167,25 @@ func TestMemberAdd_BadBody(t *testing.T) {
 		if uc.calls != 0 {
 			t.Errorf("body %q: use case tidak boleh dipanggil", body)
 		}
+	}
+}
+
+func TestMemberList_PassesPaginationAndReturnsMeta(t *testing.T) {
+	uc := &fakeMemberUC{listFn: func() ([]domain.Member, error) { return nil, nil }}
+	w := do(newMemberRouter(uc, nil), "GET", membersPath+"?page=3&limit=4", "", authAs)
+	if w.Code != http.StatusOK || uc.gotPage != 3 || uc.gotLimit != 4 {
+		t.Fatalf("status %d, page/limit = %d/%d", w.Code, uc.gotPage, uc.gotLimit)
+	}
+	if _, ok := decode(t, w)["meta"].(map[string]any); !ok {
+		t.Errorf("respons harus memuat meta: %s", w.Body)
+	}
+}
+
+func TestMemberList_NonNumericPaginationIs400(t *testing.T) {
+	uc := &fakeMemberUC{}
+	w := do(newMemberRouter(uc, nil), "GET", membersPath+"?limit=x", "", authAs)
+	if w.Code != http.StatusBadRequest || uc.calls != 0 {
+		t.Fatalf("status %d, calls %d", w.Code, uc.calls)
 	}
 }
 

@@ -9,12 +9,13 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"truss-project/internal/modules/workspaces/domain"
+	"truss-project/internal/platform/pagination"
 )
 
 // workspaceUseCase adalah interface yang dibutuhkan handler (mudah di-mock).
 type workspaceUseCase interface {
 	Create(ctx context.Context, userID, name string, description *string) (*domain.WorkspaceAccess, error)
-	List(ctx context.Context, userID string) ([]domain.WorkspaceAccess, error)
+	List(ctx context.Context, userID string, page, limit int) (*pagination.Result[domain.WorkspaceAccess], error)
 	Get(ctx context.Context, userID, workspaceID string) (*domain.WorkspaceAccess, error)
 }
 
@@ -68,13 +69,19 @@ func (h *WorkspaceHandler) List(c *gin.Context) {
 		return
 	}
 
-	list, err := h.uc.List(c.Request.Context(), userID)
+	page, limit, okQuery := pagination.FromQuery(c)
+	if !okQuery {
+		writeError(c, h.log, domain.ErrInvalidInput)
+		return
+	}
+
+	res, err := h.uc.List(c.Request.Context(), userID, page, limit)
 	if err != nil {
 		writeError(c, h.log, err)
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{"data": toWorkspaceResponses(list)})
+	c.JSON(http.StatusOK, gin.H{"data": toWorkspaceResponses(res.Items), "meta": res.Meta()})
 }
 
 func (h *WorkspaceHandler) Get(c *gin.Context) {

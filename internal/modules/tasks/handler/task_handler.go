@@ -14,6 +14,7 @@ import (
 	"truss-project/internal/middleware"
 	"truss-project/internal/modules/tasks/domain"
 	"truss-project/internal/modules/tasks/usecase"
+	"truss-project/internal/platform/pagination"
 )
 
 // taskUseCase adalah interface yang dibutuhkan handler (mudah di-mock).
@@ -23,7 +24,7 @@ type taskUseCase interface {
 	Get(ctx context.Context, userID, taskID string) (*domain.TaskView, error)
 	Update(ctx context.Context, userID, taskID string, in usecase.UpdateInput) (*domain.TaskView, error)
 	Delete(ctx context.Context, userID, taskID string) error
-	Activities(ctx context.Context, userID, taskID string) ([]domain.Activity, error)
+	Activities(ctx context.Context, userID, taskID string, page, limit int) (*pagination.Result[domain.Activity], error)
 	Summary(ctx context.Context, userID, projectID string) (*domain.ProjectSummary, error)
 }
 
@@ -166,12 +167,17 @@ func (h *TaskHandler) Activities(c *gin.Context) {
 	if !ok {
 		return
 	}
-	list, err := h.uc.Activities(c.Request.Context(), userID, c.Param("id"))
+	page, limit, okQuery := pagination.FromQuery(c)
+	if !okQuery {
+		badRequest(c)
+		return
+	}
+	res, err := h.uc.Activities(c.Request.Context(), userID, c.Param("id"), page, limit)
 	if err != nil {
 		h.writeError(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"data": toActivityResponses(list)})
+	c.JSON(http.StatusOK, gin.H{"data": toActivityResponses(res.Items), "meta": res.Meta()})
 }
 
 // Summary: ringkasan project untuk dashboard (PRD FR-09).

@@ -106,7 +106,21 @@ func (r *ProjectGormRepository) AddMember(
 	return rec.JoinedAt, nil
 }
 
-func (r *ProjectGormRepository) ListMembers(ctx context.Context, projectID uuid.UUID) ([]domain.Member, error) {
+func (r *ProjectGormRepository) ListMembers(
+	ctx context.Context,
+	projectID uuid.UUID,
+	limit, offset int,
+) ([]domain.Member, int64, error) {
+	// Total memakai JOIN yang sama agar user yang di-soft-delete tidak ikut terhitung.
+	var total int64
+	if err := r.db.WithContext(ctx).
+		Table("project_members AS pm").
+		Joins("JOIN users AS u ON u.internal_id = pm.user_id AND u.deleted_at IS NULL").
+		Where("pm.project_id = ?", projectID).
+		Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+
 	var rows []memberRow
 	err := r.db.WithContext(ctx).
 		Table("project_members AS pm").
@@ -115,9 +129,11 @@ func (r *ProjectGormRepository) ListMembers(ctx context.Context, projectID uuid.
 		Joins("JOIN users AS u ON u.internal_id = pm.user_id AND u.deleted_at IS NULL").
 		Where("pm.project_id = ?", projectID).
 		Order("CASE pm.role WHEN 'owner' THEN 0 WHEN 'admin' THEN 1 ELSE 2 END, pm.joined_at, u.email").
+		Limit(limit).
+		Offset(offset).
 		Scan(&rows).Error
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 
 	out := make([]domain.Member, 0, len(rows))
@@ -130,7 +146,7 @@ func (r *ProjectGormRepository) ListMembers(ctx context.Context, projectID uuid.
 			JoinedAt: row.JoinedAt,
 		})
 	}
-	return out, nil
+	return out, total, nil
 }
 
 // RemoveMember menghapus keanggotaan project dan, dalam transaksi yang sama, melepas

@@ -6,6 +6,7 @@ package repository_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -305,11 +306,14 @@ func TestListAccessible_VisibilityRules(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			got, err := repo.ListAccessible(ctx, tc.uid, nil)
+			got, total, err := repo.ListAccessible(ctx, tc.uid, nil, 100, 0)
 			if err != nil {
 				t.Fatal(err)
 			}
 			g := ids(got)
+			if int(total) != len(tc.want) {
+				t.Errorf("total = %d, harapannya %d", total, len(tc.want))
+			}
 			if len(g) != len(tc.want) {
 				t.Fatalf("dapat %v, harapannya %v", g, tc.want)
 			}
@@ -322,7 +326,7 @@ func TestListAccessible_VisibilityRules(t *testing.T) {
 	}
 
 	t.Run("peran terpetakan", func(t *testing.T) {
-		got, _ := repo.ListAccessible(ctx, admin, nil)
+		got, _, _ := repo.ListAccessible(ctx, admin, nil, 100, 0)
 		roles := map[uuid.UUID]domain.Access{}
 		for _, p := range got {
 			roles[p.ID] = p.Access
@@ -336,7 +340,7 @@ func TestListAccessible_VisibilityRules(t *testing.T) {
 	})
 
 	t.Run("filter workspace", func(t *testing.T) {
-		got, err := repo.ListAccessible(ctx, owner, &w2)
+		got, _, err := repo.ListAccessible(ctx, owner, &w2, 100, 0)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -347,14 +351,48 @@ func TestListAccessible_VisibilityRules(t *testing.T) {
 
 	t.Run("keanggotaan project basi tanpa keanggotaan workspace tidak terlihat", func(t *testing.T) {
 		pgtest.Exec(t, db, "DELETE FROM workspace_members WHERE workspace_id = ? AND user_id = ?", w1, member)
-		got, err := repo.ListAccessible(ctx, member, nil)
+		got, total, err := repo.ListAccessible(ctx, member, nil, 100, 0)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if len(got) != 0 {
-			t.Errorf("tidak boleh terlihat, dapat %v", ids(got))
+		if len(got) != 0 || total != 0 {
+			t.Errorf("tidak boleh terlihat, dapat %v (total %d)", ids(got), total)
 		}
 	})
+}
+
+func TestListAccessible_PagesAreDisjointAndTotalCountsVisibleOnly(t *testing.T) {
+	repo, db := setup(t)
+	owner := insertUser(t, db, "owner@example.com")
+	stranger := insertUser(t, db, "stranger@example.com")
+	wid, _ := projectWithOwner(t, repo, db, owner)
+	for i := 0; i < 4; i++ {
+		mustCreate(t, repo, newProject(wid, owner, fmt.Sprintf("P%d", i)))
+		time.Sleep(5 * time.Millisecond)
+	}
+	// Project di workspace lain tidak boleh ikut terhitung untuk owner ini.
+	otherWS, _ := projectWithOwner(t, repo, db, stranger)
+	mustCreate(t, repo, newProject(otherWS, stranger, "Asing"))
+
+	seen := map[uuid.UUID]bool{}
+	for page, want := range []int{2, 2, 1} {
+		got, total, err := repo.ListAccessible(ctx, owner, &wid, 2, page*2)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(got) != want || total != 5 {
+			t.Fatalf("halaman %d: %d item (ingin %d), total %d (ingin 5)", page+1, len(got), want, total)
+		}
+		for _, g := range got {
+			if seen[g.ID] {
+				t.Fatalf("project %v muncul di dua halaman", g.ID)
+			}
+			seen[g.ID] = true
+		}
+	}
+	if got, total, _ := repo.ListAccessible(ctx, owner, &wid, 2, 100); len(got) != 0 || total != 5 {
+		t.Errorf("di luar rentang: %d item, total %d", len(got), total)
+	}
 }
 
 // ---------- FindWithAccess ----------

@@ -6,6 +6,7 @@ package repository_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -151,7 +152,7 @@ func TestCreate_PersistsTaskAndActivity(t *testing.T) {
 		t.Errorf("assignee view = %+v", v.Assignee)
 	}
 
-	acts, err := e.repo.ListActivities(ctx, v.ID)
+	acts, _, err := e.repo.ListActivities(ctx, v.ID, 100, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -238,7 +239,7 @@ func TestUpdate_PersistsAndRecordsActivities(t *testing.T) {
 		t.Errorf("updated_at harus maju (PRD FR-05 #5): %v -> %v", v.UpdatedAt, got.UpdatedAt)
 	}
 
-	acts, err := e.repo.ListActivities(ctx, v.ID)
+	acts, _, err := e.repo.ListActivities(ctx, v.ID, 100, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -519,7 +520,7 @@ func TestCancelledContext(t *testing.T) {
 	if _, _, err := e.repo.List(cctx, e.pid, domain.TaskFilter{Limit: 10}); err == nil {
 		t.Error("List harus error")
 	}
-	if _, err := e.repo.ListActivities(cctx, v.ID); err == nil {
+	if _, _, err := e.repo.ListActivities(cctx, v.ID, 100, 0); err == nil {
 		t.Error("ListActivities harus error")
 	}
 }
@@ -529,4 +530,42 @@ func deref(s *string) string {
 		return "<nil>"
 	}
 	return *s
+}
+
+func TestListActivities_PagesAreOrderedDisjointAndTotalIsUnaffectedByLimit(t *testing.T) {
+	e := setup(t)
+	v := e.create(t, "Banyak riwayat", nil) // sudah memuat 1 aktivitas "created"
+	for i := 1; i <= 4; i++ {
+		exec(t, e.db,
+			`INSERT INTO task_activities (task_id, actor_id, activity_type, new_value, created_at)
+			 VALUES (?, ?, 'title_changed', to_jsonb(?::text), NOW() + make_interval(secs => ?))`,
+			v.ID, e.owner, fmt.Sprintf("judul %d", i), i)
+	}
+
+	seen := map[uuid.UUID]bool{}
+	var times []time.Time
+	for page, want := range []int{2, 2, 1} {
+		got, total, err := e.repo.ListActivities(ctx, v.ID, 2, page*2)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(got) != want || total != 5 {
+			t.Fatalf("halaman %d: %d item (ingin %d), total %d (ingin 5)", page+1, len(got), want, total)
+		}
+		for _, a := range got {
+			if seen[a.ID] {
+				t.Fatalf("aktivitas %v muncul di dua halaman", a.ID)
+			}
+			seen[a.ID] = true
+			times = append(times, a.CreatedAt)
+		}
+	}
+	for i := 1; i < len(times); i++ {
+		if times[i].Before(times[i-1]) {
+			t.Fatalf("urutan lintas halaman harus terlama lebih dulu: %v", times)
+		}
+	}
+	if got, total, _ := e.repo.ListActivities(ctx, v.ID, 2, 100); len(got) != 0 || total != 5 {
+		t.Errorf("di luar rentang: %d item, total %d", len(got), total)
+	}
 }

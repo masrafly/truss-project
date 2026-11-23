@@ -18,8 +18,9 @@ type WorkspaceRepository interface {
 	// secara atomik (semua berhasil atau tidak sama sekali). Mengisi ID dan timestamp w.
 	CreateWithOwner(ctx context.Context, w *domain.Workspace) error
 
-	// ListByMember mengembalikan workspace milik user beserta perannya, terbaru lebih dulu.
-	ListByMember(ctx context.Context, userID uuid.UUID) ([]domain.WorkspaceAccess, error)
+	// ListByMember mengembalikan satu halaman workspace milik user beserta perannya, terbaru
+	// lebih dulu, dan total seluruh workspace user.
+	ListByMember(ctx context.Context, userID uuid.UUID, limit, offset int) ([]domain.WorkspaceAccess, int64, error)
 
 	FindByID(ctx context.Context, id uuid.UUID) (*domain.Workspace, error)
 

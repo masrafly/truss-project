@@ -40,6 +40,6 @@ type TaskRepository interface {
 	// dihitung per asOf.
 	Summary(ctx context.Context, projectID uuid.UUID, asOf time.Time) (domain.ProjectSummary, error)
 
-	// ListActivities: riwayat task, terlama lebih dulu.
-	ListActivities(ctx context.Context, taskID uuid.UUID) ([]domain.Activity, error)
+	// ListActivities: satu halaman riwayat task, terlama lebih dulu, beserta total seluruh riwayat.
+	ListActivities(ctx context.Context, taskID uuid.UUID, limit, offset int) ([]domain.Activity, int64, error)
 }

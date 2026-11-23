@@ -20,6 +20,7 @@ import (
 	"truss-project/internal/modules/projects/domain"
 	"truss-project/internal/modules/projects/handler"
 	"truss-project/internal/modules/projects/usecase"
+	"truss-project/internal/platform/pagination"
 )
 
 func init() { gin.SetMode(gin.TestMode) }
@@ -37,6 +38,7 @@ type fakeUC struct {
 	calls                               int
 	gotUser, gotWS, gotProject, gotName string
 	gotDesc                             *string
+	gotPage, gotLimit                   int
 	gotUpdate                           usecase.UpdateInput
 }
 
@@ -46,16 +48,34 @@ func (f *fakeUC) Create(_ context.Context, userID, wsID, name string, desc *stri
 	return f.createFn()
 }
 
-func (f *fakeUC) ListInWorkspace(_ context.Context, userID, wsID string) ([]domain.ProjectAccess, error) {
+func (f *fakeUC) ListInWorkspace(
+	_ context.Context,
+	userID, wsID string,
+	page, limit int,
+) (*pagination.Result[domain.ProjectAccess], error) {
 	f.calls++
 	f.gotUser, f.gotWS = userID, wsID
-	return f.listWSFn()
+	f.gotPage, f.gotLimit = page, limit
+	items, err := f.listWSFn()
+	if err != nil {
+		return nil, err
+	}
+	return pagination.NewResult(items, int64(len(items)), pagination.Params{Page: 1, Limit: 20}), nil
 }
 
-func (f *fakeUC) ListAll(_ context.Context, userID string) ([]domain.ProjectAccess, error) {
+func (f *fakeUC) ListAll(
+	_ context.Context,
+	userID string,
+	page, limit int,
+) (*pagination.Result[domain.ProjectAccess], error) {
 	f.calls++
 	f.gotUser = userID
-	return f.listAllFn()
+	f.gotPage, f.gotLimit = page, limit
+	items, err := f.listAllFn()
+	if err != nil {
+		return nil, err
+	}
+	return pagination.NewResult(items, int64(len(items)), pagination.Params{Page: 1, Limit: 20}), nil
 }
 
 func (f *fakeUC) Get(_ context.Context, userID, pid string) (*domain.ProjectAccess, error) {
@@ -233,6 +253,37 @@ func TestCreate_BadBody(t *testing.T) {
 }
 
 // ---------- List ----------
+
+func TestListProjects_PassPaginationAndReturnMeta(t *testing.T) {
+	for name, path := range map[string]string{"workspace": wsProjectsPath, "semua": "/projects"} {
+		t.Run(name, func(t *testing.T) {
+			uc := &fakeUC{
+				listWSFn:  func() ([]domain.ProjectAccess, error) { return nil, nil },
+				listAllFn: func() ([]domain.ProjectAccess, error) { return nil, nil },
+			}
+			w := do(newRouter(uc, nil), "GET", path+"?page=2&limit=5", "", authAs)
+
+			if w.Code != http.StatusOK || uc.gotPage != 2 || uc.gotLimit != 5 {
+				t.Fatalf("status %d, page/limit = %d/%d", w.Code, uc.gotPage, uc.gotLimit)
+			}
+			if _, ok := decode(t, w)["meta"].(map[string]any); !ok {
+				t.Errorf("respons harus memuat meta: %s", w.Body)
+			}
+		})
+	}
+}
+
+func TestListProjects_NonNumericPaginationIs400(t *testing.T) {
+	for name, path := range map[string]string{"workspace": wsProjectsPath, "semua": "/projects"} {
+		t.Run(name, func(t *testing.T) {
+			uc := &fakeUC{}
+			w := do(newRouter(uc, nil), "GET", path+"?page=abc", "", authAs)
+			if w.Code != http.StatusBadRequest || uc.calls != 0 {
+				t.Fatalf("status %d, calls %d", w.Code, uc.calls)
+			}
+		})
+	}
+}
 
 func TestListInWorkspace_EmptyIsArray(t *testing.T) {
 	uc := &fakeUC{listWSFn: func() ([]domain.ProjectAccess, error) { return nil, nil }}

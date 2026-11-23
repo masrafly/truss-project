@@ -26,6 +26,7 @@ type fakeRepo struct {
 	acts     []domain.Activity
 
 	accessErr, createErr, updateErr, deleteErr, listErr, actsErr error
+	actsLimit, actsOffset                                        int
 	// mutateBeforeLock, bila diisi, mengubah task "di database" tepat sebelum fn dipanggil
 	// (mensimulasikan perubahan oleh pengguna lain di antara baca dan kunci).
 	mutateBeforeLock func(*domain.Task)
@@ -138,9 +139,14 @@ func (r *fakeRepo) List(_ context.Context, pid uuid.UUID, f domain.TaskFilter) (
 	return nil, 42, nil
 }
 
-func (r *fakeRepo) ListActivities(_ context.Context, tid uuid.UUID) ([]domain.Activity, error) {
+func (r *fakeRepo) ListActivities(
+	_ context.Context,
+	tid uuid.UUID,
+	limit, offset int,
+) ([]domain.Activity, int64, error) {
+	r.actsLimit, r.actsOffset = limit, offset
 	if r.actsErr != nil {
-		return nil, r.actsErr
+		return nil, 0, r.actsErr
 	}
 	var out []domain.Activity
 	for _, a := range r.acts {
@@ -148,7 +154,7 @@ func (r *fakeRepo) ListActivities(_ context.Context, tid uuid.UUID) ([]domain.Ac
 			out = append(out, a)
 		}
 	}
-	return out, nil
+	return out, int64(len(out)), nil
 }
 
 func sameUUID(a, b *uuid.UUID) bool {
@@ -663,18 +669,39 @@ func TestActivities(t *testing.T) {
 	if _, err := f.uc.Update(ctx, f.pAdmin.String(), f.tid.String(), usecase.UpdateInput{Status: strp("done")}); err != nil {
 		t.Fatal(err)
 	}
-	got, err := f.uc.Activities(ctx, f.bystander.String(), f.tid.String())
-	if err != nil || len(got) != 1 || got[0].Type != domain.ActivityStatusChanged {
-		t.Fatalf("got=%+v err=%v", got, err)
+	res, err := f.uc.Activities(ctx, f.bystander.String(), f.tid.String(), 0, 0)
+	if err != nil || len(res.Items) != 1 || res.Total != 1 || res.Items[0].Type != domain.ActivityStatusChanged {
+		t.Fatalf("res=%+v err=%v", res, err)
 	}
-	if _, err := f.uc.Activities(ctx, f.outsider.String(), f.tid.String()); !errors.Is(err, domain.ErrTaskNotFound) {
+	if _, err := f.uc.Activities(ctx, f.outsider.String(), f.tid.String(), 0, 0); !errors.Is(err, domain.ErrTaskNotFound) {
 		t.Errorf("orang luar harus 404, dapat %v", err)
 	}
 
 	empty := newFixture()
-	list, err := empty.uc.Activities(ctx, empty.pAdmin.String(), empty.tid.String())
-	if err != nil || list == nil || len(list) != 0 {
+	list, err := empty.uc.Activities(ctx, empty.pAdmin.String(), empty.tid.String(), 0, 0)
+	if err != nil || list.Items == nil || len(list.Items) != 0 {
 		t.Errorf("harapannya slice kosong non-nil, dapat %#v err=%v", list, err)
+	}
+}
+
+func TestActivities_PaginationDefaultsAndValidation(t *testing.T) {
+	f := newFixture()
+	if _, err := f.uc.Activities(ctx, f.pAdmin.String(), f.tid.String(), 0, 0); err != nil ||
+		f.repo.actsLimit != 50 || f.repo.actsOffset != 0 {
+		t.Fatalf("default: err=%v limit=%d offset=%d", err, f.repo.actsLimit, f.repo.actsOffset)
+	}
+	if _, err := f.uc.Activities(ctx, f.pAdmin.String(), f.tid.String(), 3, 10); err != nil ||
+		f.repo.actsLimit != 10 || f.repo.actsOffset != 20 {
+		t.Fatalf("halaman 3: err=%v limit=%d offset=%d", err, f.repo.actsLimit, f.repo.actsOffset)
+	}
+	f.repo.actsLimit = -1
+	for _, c := range [][2]int{{-1, 10}, {1, -1}, {1, 101}} {
+		if _, err := f.uc.Activities(ctx, f.pAdmin.String(), f.tid.String(), c[0], c[1]); !errors.Is(err, domain.ErrInvalidInput) {
+			t.Errorf("page=%d limit=%d: dapat %v", c[0], c[1], err)
+		}
+	}
+	if f.repo.actsLimit != -1 {
+		t.Error("repository tidak boleh dipanggil untuk pagination tidak valid")
 	}
 }
 

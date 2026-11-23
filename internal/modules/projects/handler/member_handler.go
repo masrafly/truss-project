@@ -8,12 +8,13 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"truss-project/internal/modules/projects/domain"
+	"truss-project/internal/platform/pagination"
 )
 
 // memberUseCase adalah interface yang dibutuhkan handler (mudah di-mock).
 type memberUseCase interface {
 	Add(ctx context.Context, actorID, projectID, email, role string) (*domain.Member, error)
-	List(ctx context.Context, actorID, projectID string) ([]domain.Member, error)
+	List(ctx context.Context, actorID, projectID string, page, limit int) (*pagination.Result[domain.Member], error)
 	Remove(ctx context.Context, actorID, projectID, targetUserID string) error
 }
 
@@ -61,12 +62,17 @@ func (h *MemberHandler) List(c *gin.Context) {
 	if !ok {
 		return
 	}
-	list, err := h.uc.List(c.Request.Context(), actorID, c.Param("id"))
+	page, limit, okQuery := pagination.FromQuery(c)
+	if !okQuery {
+		writeError(c, h.log, domain.ErrInvalidInput)
+		return
+	}
+	res, err := h.uc.List(c.Request.Context(), actorID, c.Param("id"), page, limit)
 	if err != nil {
 		writeError(c, h.log, err)
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"data": toMemberResponses(list)})
+	c.JSON(http.StatusOK, gin.H{"data": toMemberResponses(res.Items), "meta": res.Meta()})
 }
 
 func (h *MemberHandler) Remove(c *gin.Context) {

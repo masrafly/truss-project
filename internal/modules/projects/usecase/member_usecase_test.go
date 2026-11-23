@@ -20,6 +20,7 @@ type fakeMemberRepo struct {
 
 	lookupErr, roleErr, addErr, listMembersErr, removeErr error
 	lookupCalls, addCalls, removeCalls, listMembersCalls  int
+	lastLimit, lastOffset                                 int
 	lastLookup                                            string
 	lastRemoved                                           struct{ pid, uid, actor uuid.UUID }
 }
@@ -63,16 +64,21 @@ func (r *fakeMemberRepo) AddMember(_ context.Context, pid, uid uuid.UUID, role d
 	return time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC), nil
 }
 
-func (r *fakeMemberRepo) ListMembers(_ context.Context, pid uuid.UUID) ([]domain.Member, error) {
+func (r *fakeMemberRepo) ListMembers(
+	_ context.Context,
+	pid uuid.UUID,
+	limit, offset int,
+) ([]domain.Member, int64, error) {
 	r.listMembersCalls++
+	r.lastLimit, r.lastOffset = limit, offset
 	if r.listMembersErr != nil {
-		return nil, r.listMembersErr
+		return nil, 0, r.listMembersErr
 	}
 	var out []domain.Member
 	for uid, role := range r.pRoles[pid] {
 		out = append(out, domain.Member{UserID: uid, Role: role})
 	}
-	return out, nil
+	return out, int64(len(out)), nil
 }
 
 func (r *fakeMemberRepo) RemoveMember(_ context.Context, pid, uid, actor uuid.UUID) error {
@@ -257,14 +263,14 @@ func TestMemberList_ViewersOnly(t *testing.T) {
 	for name, uid := range map[string]uuid.UUID{
 		"owner ws": f.wsOwner, "admin ws": f.wsAdmin, "owner project": f.pOwner, "member project": f.wsMember,
 	} {
-		got, err := f.muc.List(ctx, uid.String(), f.pid.String())
-		if err != nil || len(got) != 3 {
-			t.Errorf("%s: len=%d err=%v", name, len(got), err)
+		res, err := f.muc.List(ctx, uid.String(), f.pid.String(), 0, 0)
+		if err != nil || len(res.Items) != 3 || res.Total != 3 {
+			t.Errorf("%s: err=%v res=%+v", name, err, res)
 		}
 	}
 	calls := f.mrepo.listMembersCalls
 	for name, uid := range map[string]uuid.UUID{"member ws saja": f.wsPlain, "orang luar": f.outsider} {
-		if _, err := f.muc.List(ctx, uid.String(), f.pid.String()); !errors.Is(err, domain.ErrProjectNotFound) {
+		if _, err := f.muc.List(ctx, uid.String(), f.pid.String(), 0, 0); !errors.Is(err, domain.ErrProjectNotFound) {
 			t.Errorf("%s harus 404, dapat %v", name, err)
 		}
 	}
@@ -276,13 +282,13 @@ func TestMemberList_ViewersOnly(t *testing.T) {
 func TestMemberList_EmptyNonNilAndErrors(t *testing.T) {
 	f := newMemberFixture()
 	f.repo.pRoles[f.pid] = map[uuid.UUID]domain.ProjectRole{}
-	got, err := f.muc.List(ctx, f.wsOwner.String(), f.pid.String())
-	if err != nil || got == nil || len(got) != 0 {
-		t.Errorf("harapannya slice kosong non-nil, dapat %#v err=%v", got, err)
+	res, err := f.muc.List(ctx, f.wsOwner.String(), f.pid.String(), 0, 0)
+	if err != nil || res.Items == nil || len(res.Items) != 0 {
+		t.Errorf("harapannya slice kosong non-nil, dapat %#v err=%v", res, err)
 	}
 	boom := errors.New("db mati")
 	f.mrepo.listMembersErr = boom
-	if _, err := f.muc.List(ctx, f.wsOwner.String(), f.pid.String()); !errors.Is(err, boom) {
+	if _, err := f.muc.List(ctx, f.wsOwner.String(), f.pid.String(), 0, 0); !errors.Is(err, boom) {
 		t.Errorf("dapat %v", err)
 	}
 }
@@ -380,5 +386,20 @@ func TestMemberRemove_InvalidIDsAndErrors(t *testing.T) {
 	f.mrepo.removeErr = boom
 	if err := f.muc.Remove(ctx, f.pOwner.String(), f.pid.String(), f.wsMember.String()); !errors.Is(err, boom) {
 		t.Errorf("hapus: dapat %v", err)
+	}
+}
+
+func TestMemberList_PaginationDefaultsAndValidation(t *testing.T) {
+	f := newMemberFixture()
+	if _, err := f.muc.List(ctx, f.wsOwner.String(), f.pid.String(), 2, 5); err != nil ||
+		f.mrepo.lastLimit != 5 || f.mrepo.lastOffset != 5 {
+		t.Fatalf("err=%v limit=%d offset=%d", err, f.mrepo.lastLimit, f.mrepo.lastOffset)
+	}
+	calls := f.mrepo.listMembersCalls
+	if _, err := f.muc.List(ctx, f.wsOwner.String(), f.pid.String(), 1, 101); !errors.Is(err, domain.ErrInvalidInput) {
+		t.Fatalf("limit 101 harus ErrInvalidInput, dapat %v", err)
+	}
+	if f.mrepo.listMembersCalls != calls {
+		t.Error("repository tidak boleh dipanggil untuk pagination tidak valid")
 	}
 }

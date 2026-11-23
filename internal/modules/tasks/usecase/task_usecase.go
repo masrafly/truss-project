@@ -12,6 +12,7 @@ import (
 	"github.com/google/uuid"
 
 	"truss-project/internal/modules/tasks/domain"
+	"truss-project/internal/platform/pagination"
 )
 
 const (
@@ -20,6 +21,10 @@ const (
 	maxQueryLength       = 100
 	defaultLimit         = 20
 	maxLimit             = 100
+
+	// Pagination riwayat aktivitas task.
+	defaultActivityLimit = 50
+	maxActivityLimit     = 100
 )
 
 // Optional membedakan "tidak dikirim" (Set=false) dari "dikirim null" (Set=true, Value=nil).
@@ -276,19 +281,24 @@ func (u *TaskUseCase) Delete(ctx context.Context, userID, taskID string) error {
 }
 
 // Activities: riwayat task untuk siapa pun yang dapat melihat task.
-func (u *TaskUseCase) Activities(ctx context.Context, userID, taskID string) ([]domain.Activity, error) {
+func (u *TaskUseCase) Activities(
+	ctx context.Context,
+	userID, taskID string,
+	page, limit int,
+) (*pagination.Result[domain.Activity], error) {
 	_, view, _, err := u.loadTask(ctx, userID, taskID)
 	if err != nil {
 		return nil, err
 	}
-	list, err := u.repo.ListActivities(ctx, view.ID)
+	p, err := pagination.New(page, limit, defaultActivityLimit, maxActivityLimit)
+	if err != nil {
+		return nil, domain.ErrInvalidInput
+	}
+	list, total, err := u.repo.ListActivities(ctx, view.ID, p.Limit, p.Offset)
 	if err != nil {
 		return nil, err
 	}
-	if list == nil {
-		list = []domain.Activity{}
-	}
-	return list, nil
+	return pagination.NewResult(list, total, p), nil
 }
 
 // ---------- helpers ----------

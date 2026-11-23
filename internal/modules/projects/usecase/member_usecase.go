@@ -9,6 +9,7 @@ import (
 	"github.com/google/uuid"
 
 	"truss-project/internal/modules/projects/domain"
+	"truss-project/internal/platform/pagination"
 )
 
 const maxEmailLength = 255 // sesuai VARCHAR(255)
@@ -80,19 +81,24 @@ func (u *MemberUseCase) Add(
 }
 
 // List: semua yang boleh melihat project boleh melihat anggotanya.
-func (u *MemberUseCase) List(ctx context.Context, actorID, projectID string) ([]domain.Member, error) {
+func (u *MemberUseCase) List(
+	ctx context.Context,
+	actorID, projectID string,
+	page, limit int,
+) (*pagination.Result[domain.Member], error) {
 	_, p, err := loadViewable(ctx, u.repo, u.log, actorID, projectID)
 	if err != nil {
 		return nil, err
 	}
-	list, err := u.repo.ListMembers(ctx, p.ID)
+	pg, err := pagination.New(page, limit, defaultListLimit, maxListLimit)
+	if err != nil {
+		return nil, domain.ErrInvalidInput
+	}
+	list, total, err := u.repo.ListMembers(ctx, p.ID, pg.Limit, pg.Offset)
 	if err != nil {
 		return nil, err
 	}
-	if list == nil {
-		list = []domain.Member{}
-	}
-	return list, nil
+	return pagination.NewResult(list, total, pg), nil
 }
 
 // Remove menghapus anggota project, atau keluar bila target adalah pemanggil sendiri.

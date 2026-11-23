@@ -6,6 +6,7 @@ package repository_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -196,13 +197,13 @@ func TestListByMember_OnlyOwnWorkspacesNewestFirstWithRoles(t *testing.T) {
 	// Alice juga anggota biasa di workspace Bob.
 	pgtest.Exec(t, db, "INSERT INTO workspace_members (workspace_id, user_id, role) VALUES (?, ?, 'member')", bobs.ID, alice)
 
-	got, err := repo.ListByMember(ctx, alice)
+	got, total, err := repo.ListByMember(ctx, alice, 100, 0)
 	if err != nil {
 		t.Fatalf("ListByMember: %v", err)
 	}
 
-	if len(got) != 3 {
-		t.Fatalf("Alice harus melihat 3 workspace, dapat %d", len(got))
+	if len(got) != 3 || total != 3 {
+		t.Fatalf("Alice harus melihat 3 workspace (total 3), dapat %d (total %d)", len(got), total)
 	}
 	// Terbaru lebih dulu: Milik Bob (dibuat setelah Lama), Baru dibuat terakhir.
 	wantOrder := []uuid.UUID{newer.ID, bobs.ID, older.ID}
@@ -231,12 +232,46 @@ func TestListByMember_DoesNotLeakOtherUsersWorkspaces(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	got, err := repo.ListByMember(ctx, alice)
+	got, total, err := repo.ListByMember(ctx, alice, 100, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got == nil || len(got) != 0 {
-		t.Fatalf("harapannya slice kosong non-nil, dapat %#v", got)
+	if got == nil || len(got) != 0 || total != 0 {
+		t.Fatalf("harapannya slice kosong non-nil dan total 0, dapat %#v (total %d)", got, total)
+	}
+}
+
+func TestListByMember_PagesAreDisjointAndTotalIsUnaffectedByLimit(t *testing.T) {
+	repo, db := setup(t)
+	alice := insertUser(t, db, "alice@example.com")
+	for i := 0; i < 5; i++ {
+		if err := repo.CreateWithOwner(ctx, newWS(fmt.Sprintf("WS %d", i), alice)); err != nil {
+			t.Fatal(err)
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+
+	seen := map[uuid.UUID]bool{}
+	for page, want := range []int{2, 2, 1} {
+		got, total, err := repo.ListByMember(ctx, alice, 2, page*2)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(got) != want || total != 5 {
+			t.Fatalf("halaman %d: %d item (ingin %d), total %d (ingin 5)", page+1, len(got), want, total)
+		}
+		for _, g := range got {
+			if seen[g.ID] {
+				t.Fatalf("workspace %v muncul di dua halaman", g.ID)
+			}
+			seen[g.ID] = true
+		}
+	}
+	if len(seen) != 5 {
+		t.Errorf("seluruh halaman harus mencakup 5 workspace, dapat %d", len(seen))
+	}
+	if got, total, _ := repo.ListByMember(ctx, alice, 2, 100); len(got) != 0 || total != 5 {
+		t.Errorf("di luar rentang: %d item, total %d", len(got), total)
 	}
 }
 
@@ -249,7 +284,7 @@ func TestListByMember_MapsAllFields(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	got, _ := repo.ListByMember(ctx, uid)
+	got, _, _ := repo.ListByMember(ctx, uid, 100, 0)
 	if len(got) != 1 {
 		t.Fatalf("dapat %d", len(got))
 	}
@@ -360,7 +395,7 @@ func TestRepository_CancelledContextReturnsRealError(t *testing.T) {
 	if err := repo.CreateWithOwner(cctx, newWS("X", uid)); err == nil {
 		t.Error("CreateWithOwner dengan context dibatalkan harus error")
 	}
-	if _, err := repo.ListByMember(cctx, uid); err == nil {
+	if _, _, err := repo.ListByMember(cctx, uid, 100, 0); err == nil {
 		t.Error("ListByMember dengan context dibatalkan harus error")
 	}
 	_, err := repo.FindMemberRole(cctx, uuid.New(), uid)

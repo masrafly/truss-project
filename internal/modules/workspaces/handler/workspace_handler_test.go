@@ -19,6 +19,7 @@ import (
 	"truss-project/internal/middleware"
 	"truss-project/internal/modules/workspaces/domain"
 	"truss-project/internal/modules/workspaces/handler"
+	"truss-project/internal/platform/pagination"
 )
 
 func init() { gin.SetMode(gin.TestMode) }
@@ -33,6 +34,7 @@ type fakeUC struct {
 	createCalls, listCalls, getCalls int
 	gotUserID, gotName, gotWSID      string
 	gotDesc                          *string
+	gotPage, gotLimit                int
 }
 
 func (f *fakeUC) Create(ctx context.Context, userID, name string, desc *string) (*domain.WorkspaceAccess, error) {
@@ -41,10 +43,19 @@ func (f *fakeUC) Create(ctx context.Context, userID, name string, desc *string) 
 	return f.createFn(ctx, userID, name, desc)
 }
 
-func (f *fakeUC) List(ctx context.Context, userID string) ([]domain.WorkspaceAccess, error) {
+func (f *fakeUC) List(
+	ctx context.Context,
+	userID string,
+	page, limit int,
+) (*pagination.Result[domain.WorkspaceAccess], error) {
 	f.listCalls++
 	f.gotUserID = userID
-	return f.listFn(ctx, userID)
+	f.gotPage, f.gotLimit = page, limit
+	items, err := f.listFn(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+	return pagination.NewResult(items, int64(len(items)), pagination.Params{Page: 1, Limit: 20}), nil
 }
 
 func (f *fakeUC) Get(ctx context.Context, userID, wsID string) (*domain.WorkspaceAccess, error) {
@@ -307,6 +318,33 @@ func TestCreate_ErrorMapping(t *testing.T) {
 }
 
 // ---------- List ----------
+
+func TestList_PassesPaginationAndReturnsMeta(t *testing.T) {
+	uc := &fakeUC{listFn: func(context.Context, string) ([]domain.WorkspaceAccess, error) {
+		return []domain.WorkspaceAccess{*sample(domain.RoleOwner)}, nil
+	}}
+
+	w := do(newRouter(uc, nil), http.MethodGet, "/workspaces?page=3&limit=7", "", "Bearer valid-u")
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d", w.Code)
+	}
+	if uc.gotPage != 3 || uc.gotLimit != 7 {
+		t.Errorf("page/limit ke use case = %d/%d, harapannya 3/7", uc.gotPage, uc.gotLimit)
+	}
+	if _, ok := decode(t, w)["meta"].(map[string]any); !ok {
+		t.Errorf("respons harus memuat meta: %s", w.Body.String())
+	}
+}
+
+func TestList_NonNumericPaginationIs400WithoutCallingUseCase(t *testing.T) {
+	uc := &fakeUC{}
+	w := do(newRouter(uc, nil), http.MethodGet, "/workspaces?page=abc", "", "Bearer valid-u")
+
+	if w.Code != http.StatusBadRequest || uc.listCalls != 0 {
+		t.Fatalf("status = %d, listCalls = %d", w.Code, uc.listCalls)
+	}
+}
 
 func TestList_Success(t *testing.T) {
 	uc := &fakeUC{listFn: func(context.Context, string) ([]domain.WorkspaceAccess, error) {

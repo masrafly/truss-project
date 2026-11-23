@@ -5,6 +5,7 @@ package repository_test
 
 import (
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -222,9 +223,12 @@ func TestListMembers_OrderAndSoftDelete(t *testing.T) {
 	add(gone, domain.ProjectAdmin)
 	pgtest.Exec(t, db, "UPDATE users SET deleted_at = NOW() WHERE internal_id = ?", gone)
 
-	got, err := repo.ListMembers(ctx, pid)
+	got, total, err := repo.ListMembers(ctx, pid, 100, 0)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if total != 4 {
+		t.Errorf("total harus konsisten dengan daftar (4, user soft-delete tidak dihitung), dapat %d", total)
 	}
 	want := []uuid.UUID{owner, adm, m1, m2}
 	if len(got) != len(want) {
@@ -239,9 +243,35 @@ func TestListMembers_OrderAndSoftDelete(t *testing.T) {
 		t.Errorf("pemetaan field salah: %+v", got[0])
 	}
 
-	empty, err := repo.ListMembers(ctx, uuid.New())
+	empty, _, err := repo.ListMembers(ctx, uuid.New(), 100, 0)
 	if err != nil || empty == nil || len(empty) != 0 {
 		t.Errorf("project tak ada: harapannya slice kosong non-nil, dapat %#v err=%v", empty, err)
+	}
+}
+
+func TestListMembers_PagesKeepOrderAndTotal(t *testing.T) {
+	repo, db := setup(t)
+	owner := insertUser(t, db, "owner@example.com")
+	wid, pid := projectWithOwner(t, repo, db, owner)
+	for i := 0; i < 4; i++ {
+		u := insertUser(t, db, fmt.Sprintf("m%d@example.com", i))
+		addWSMember(t, db, wid, u, "member")
+		if _, err := repo.AddMember(ctx, pid, u, domain.ProjectMember); err != nil {
+			t.Fatal(err)
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+
+	first, total, err := repo.ListMembers(ctx, pid, 2, 0)
+	if err != nil || total != 5 || len(first) != 2 || first[0].UserID != owner {
+		t.Fatalf("halaman 1: err=%v total=%d len=%d", err, total, len(first))
+	}
+	last, total, err := repo.ListMembers(ctx, pid, 2, 4)
+	if err != nil || total != 5 || len(last) != 1 {
+		t.Fatalf("halaman 3: err=%v total=%d len=%d", err, total, len(last))
+	}
+	if last[0].UserID == owner || last[0].UserID == first[0].UserID || last[0].UserID == first[1].UserID {
+		t.Error("halaman tidak boleh berisi anggota yang sama dengan halaman lain")
 	}
 }
 
@@ -310,7 +340,7 @@ func TestMemberRepo_CancelledContext(t *testing.T) {
 	if _, err := repo.AddMember(cctx, pid, owner, domain.ProjectMember); err == nil || errors.Is(err, domain.ErrAlreadyMember) {
 		t.Errorf("AddMember: dapat %v", err)
 	}
-	if _, err := repo.ListMembers(cctx, pid); err == nil {
+	if _, _, err := repo.ListMembers(cctx, pid, 100, 0); err == nil {
 		t.Error("ListMembers harus error")
 	}
 	if err := repo.RemoveMember(cctx, pid, owner, owner); err == nil || errors.Is(err, domain.ErrMemberNotFound) {

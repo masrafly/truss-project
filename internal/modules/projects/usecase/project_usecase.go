@@ -12,11 +12,16 @@ import (
 	"github.com/google/uuid"
 
 	"truss-project/internal/modules/projects/domain"
+	"truss-project/internal/platform/pagination"
 )
 
 const (
 	maxNameLength        = 100  // karakter, sesuai VARCHAR(100)
 	maxDescriptionLength = 2000 // karakter
+
+	// Pagination daftar (project dan anggota project).
+	defaultListLimit = 20
+	maxListLimit     = 100
 )
 
 // UpdateInput: field nil berarti tidak diubah. Description "" menghapus deskripsi.
@@ -93,36 +98,53 @@ func (u *ProjectUseCase) Create(
 }
 
 // ListInWorkspace: project yang boleh dilihat user di satu workspace. Non-anggota -> 404.
-func (u *ProjectUseCase) ListInWorkspace(ctx context.Context, userID, workspaceID string) ([]domain.ProjectAccess, error) {
+func (u *ProjectUseCase) ListInWorkspace(
+	ctx context.Context,
+	userID, workspaceID string,
+	page, limit int,
+) (*pagination.Result[domain.ProjectAccess], error) {
 	uid, wid, _, err := u.workspaceRole(ctx, userID, workspaceID)
 	if err != nil {
 		return nil, err
 	}
-	return u.list(ctx, uid, &wid)
+	return u.list(ctx, uid, &wid, page, limit)
 }
 
 // ListAll: project yang boleh dilihat user di semua workspace-nya.
-func (u *ProjectUseCase) ListAll(ctx context.Context, userID string) ([]domain.ProjectAccess, error) {
+func (u *ProjectUseCase) ListAll(
+	ctx context.Context,
+	userID string,
+	page, limit int,
+) (*pagination.Result[domain.ProjectAccess], error) {
 	uid, err := uuid.Parse(userID)
 	if err != nil {
 		return nil, domain.ErrUnauthenticated
 	}
-	return u.list(ctx, uid, nil)
+	return u.list(ctx, uid, nil, page, limit)
 }
 
-func (u *ProjectUseCase) list(ctx context.Context, uid uuid.UUID, wid *uuid.UUID) ([]domain.ProjectAccess, error) {
-	list, err := u.repo.ListAccessible(ctx, uid, wid)
+func (u *ProjectUseCase) list(
+	ctx context.Context,
+	uid uuid.UUID,
+	wid *uuid.UUID,
+	page, limit int,
+) (*pagination.Result[domain.ProjectAccess], error) {
+	p, err := pagination.New(page, limit, defaultListLimit, maxListLimit)
+	if err != nil {
+		return nil, domain.ErrInvalidInput
+	}
+	list, total, err := u.repo.ListAccessible(ctx, uid, wid, p.Limit, p.Offset)
 	if err != nil {
 		return nil, err
 	}
 	// Pertahanan berlapis: saring ulang dengan aturan domain.
 	out := make([]domain.ProjectAccess, 0, len(list))
-	for _, p := range list {
-		if p.CanView() {
-			out = append(out, p)
+	for _, pa := range list {
+		if pa.CanView() {
+			out = append(out, pa)
 		}
 	}
-	return out, nil
+	return pagination.NewResult(out, total, p), nil
 }
 
 // Get: detail project. Yang tidak berhak melihat mendapat 404.

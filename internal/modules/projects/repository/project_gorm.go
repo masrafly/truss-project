@@ -158,27 +158,41 @@ func (r *ProjectGormRepository) ListAccessible(
 	ctx context.Context,
 	userID uuid.UUID,
 	workspaceID *uuid.UUID,
-) ([]domain.ProjectAccess, error) {
-	q := r.db.WithContext(ctx).
-		Table("projects AS p").
-		Select(accessSelect).
-		Joins("JOIN workspace_members AS wm ON wm.workspace_id = p.workspace_id AND wm.user_id = ?", userID).
-		Joins("LEFT JOIN project_members AS pm ON pm.project_id = p.internal_id AND pm.user_id = ?", userID).
-		Where("pm.user_id IS NOT NULL OR wm.role IN ('owner', 'admin')")
-	if workspaceID != nil {
-		q = q.Where("p.workspace_id = ?", *workspaceID)
+	limit, offset int,
+) ([]domain.ProjectAccess, int64, error) {
+	// Aturan visibilitas dipakai bersama oleh penghitung total dan pengambil halaman.
+	visible := func() *gorm.DB {
+		q := r.db.WithContext(ctx).
+			Table("projects AS p").
+			Joins("JOIN workspace_members AS wm ON wm.workspace_id = p.workspace_id AND wm.user_id = ?", userID).
+			Joins("LEFT JOIN project_members AS pm ON pm.project_id = p.internal_id AND pm.user_id = ?", userID).
+			Where("pm.user_id IS NOT NULL OR wm.role IN ('owner', 'admin')")
+		if workspaceID != nil {
+			q = q.Where("p.workspace_id = ?", *workspaceID)
+		}
+		return q
+	}
+
+	var total int64
+	if err := visible().Count(&total).Error; err != nil {
+		return nil, 0, err
 	}
 
 	var rows []accessRow
-	if err := q.Order("p.created_at DESC, p.internal_id").Scan(&rows).Error; err != nil {
-		return nil, err
+	if err := visible().
+		Select(accessSelect).
+		Order("p.created_at DESC, p.internal_id").
+		Limit(limit).
+		Offset(offset).
+		Scan(&rows).Error; err != nil {
+		return nil, 0, err
 	}
 
 	out := make([]domain.ProjectAccess, 0, len(rows))
 	for _, row := range rows {
 		out = append(out, row.toDomain())
 	}
-	return out, nil
+	return out, total, nil
 }
 
 func (r *ProjectGormRepository) FindWithAccess(

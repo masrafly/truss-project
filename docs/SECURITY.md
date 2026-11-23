@@ -155,7 +155,7 @@ Review dilakukan dengan membaca kode seluruh modul (auth, workspaces, projects, 
 | 4 | Rendah | Gin mempercayai semua proxy (`X-Forwarded-For` bisa dipalsukan) | **Diperbaiki**: `TRUSTED_PROXIES`, default tidak ada |
 | 5 | Rendah | Register tanpa batas panjang nama/email (500 alih-alih 400) | **Diperbaiki** |
 | 6 | Rendah | Anggota ditambahkan langsung tanpa persetujuan; respons mengungkap email terdaftar | Terbuka: fitur undangan (ROADMAP) |
-| 7 | Rendah | Daftar workspace/project/anggota/aktivitas tanpa pagination | Terbuka (ROADMAP) |
+| 7 | Rendah | Daftar workspace/project/anggota/aktivitas tanpa pagination | **Diperbaiki**: `page`/`limit` dengan batas maks. 100 di semua endpoint daftar (`platform/pagination`); nilai tidak valid ditolak 400 |
 | 8 | Rendah | Token tidak dapat dicabut (24 jam) | Terbuka: refresh token/logout (ROADMAP). Dampak terbatas karena otorisasi selalu membaca database |
 | 9 | Info | `DB_SSLMODE` kosong = `prefer` | Terbuka: wajibkan `require`/`verify-full` di produksi |
 | 10 | Sedang | **Ditemukan setelah review**, saat menguji aplikasi sebagai container: DSN database dirakit tanpa tanda kutip (`password=%s dbname=%s`). Password kosong membuat `dbname` hilang (tersambung ke database default), password dengan spasi/kutip/backslash terpotong atau rusak, dan password berisi `host=...` dapat mengganti host tujuan koneksi | **Diperbaiki**: setiap nilai dikutip dan di-escape (`buildDSN`), dengan test yang mem-parse DSN memakai parser pgx |

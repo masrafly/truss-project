@@ -34,7 +34,7 @@ type MemberRepository interface {
 	AddMember(ctx context.Context, projectID, userID uuid.UUID, role domain.ProjectRole) (time.Time, error)
 
 	// ListMembers: Owner, Admin, lalu Member; di dalam peran urut waktu bergabung.
-	ListMembers(ctx context.Context, projectID uuid.UUID) ([]domain.Member, error)
+	ListMembers(ctx context.Context, projectID uuid.UUID, limit, offset int) ([]domain.Member, int64, error)
 
 	// RemoveMember tidak pernah menghapus Owner (pertahanan terakhir di SQL). Task yang
 	// ditugaskan kepada user dilepas (assignee = null) dan dicatat atas nama actorID,

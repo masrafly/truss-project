@@ -23,6 +23,7 @@ type fakeRepo struct {
 
 	createCalls, listCalls, findCalls, roleCalls int
 	lastCreated                                  *domain.Workspace
+	lastLimit, lastOffset                        int
 }
 
 func newFakeRepo() *fakeRepo {
@@ -47,10 +48,15 @@ func (r *fakeRepo) CreateWithOwner(_ context.Context, w *domain.Workspace) error
 	return nil
 }
 
-func (r *fakeRepo) ListByMember(_ context.Context, userID uuid.UUID) ([]domain.WorkspaceAccess, error) {
+func (r *fakeRepo) ListByMember(
+	_ context.Context,
+	userID uuid.UUID,
+	limit, offset int,
+) ([]domain.WorkspaceAccess, int64, error) {
 	r.listCalls++
+	r.lastLimit, r.lastOffset = limit, offset
 	if r.listErr != nil {
-		return nil, r.listErr
+		return nil, 0, r.listErr
 	}
 	var out []domain.WorkspaceAccess
 	for wid, m := range r.members {
@@ -58,7 +64,7 @@ func (r *fakeRepo) ListByMember(_ context.Context, userID uuid.UUID) ([]domain.W
 			out = append(out, domain.WorkspaceAccess{Workspace: *r.workspaces[wid], Role: role})
 		}
 	}
-	return out, nil
+	return out, int64(len(out)), nil
 }
 
 func (r *fakeRepo) FindByID(_ context.Context, id uuid.UUID) (*domain.Workspace, error) {
@@ -247,11 +253,12 @@ func TestList_OnlyOwnWorkspaces(t *testing.T) {
 	a2, _ := uc.Create(ctx, alice.String(), "Alice 2", nil)
 	b1, _ := uc.Create(ctx, bob.String(), "Bob 1", nil)
 
-	got, err := uc.List(ctx, alice.String())
+	res, err := uc.List(ctx, alice.String(), 0, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
 
+	got := res.Items
 	ids := map[uuid.UUID]bool{}
 	for _, w := range got {
 		ids[w.ID] = true
@@ -275,26 +282,27 @@ func TestList_IncludesWorkspacesWhereUserIsPlainMember(t *testing.T) {
 	ws, _ := uc.Create(ctx, owner.String(), "Bersama", nil)
 	repo.members[ws.ID][member] = domain.RoleMember
 
-	got, _ := uc.List(ctx, member.String())
+	res, _ := uc.List(ctx, member.String(), 0, 0)
+	got := res.Items
 	if len(got) != 1 || got[0].Role != domain.RoleMember {
 		t.Fatalf("member harus melihat workspace dengan role member, dapat %+v", got)
 	}
 }
 
 func TestList_EmptyIsNonNilSlice(t *testing.T) {
-	got, err := newUC(newFakeRepo()).List(ctx, uuid.NewString())
+	res, err := newUC(newFakeRepo()).List(ctx, uuid.NewString(), 0, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got == nil || len(got) != 0 {
-		t.Errorf("harapannya slice kosong non-nil (agar JSON menjadi []), dapat %#v", got)
+	if res.Items == nil || len(res.Items) != 0 {
+		t.Errorf("harapannya slice kosong non-nil (agar JSON menjadi []), dapat %#v", res.Items)
 	}
 }
 
 func TestList_Errors(t *testing.T) {
 	t.Run("user ID tidak valid", func(t *testing.T) {
 		repo := newFakeRepo()
-		_, err := newUC(repo).List(ctx, "x")
+		_, err := newUC(repo).List(ctx, "x", 0, 0)
 		if !errors.Is(err, domain.ErrUnauthenticated) || repo.listCalls != 0 {
 			t.Fatalf("err = %v, calls = %d", err, repo.listCalls)
 		}
@@ -303,7 +311,7 @@ func TestList_Errors(t *testing.T) {
 		boom := errors.New("db mati")
 		repo := newFakeRepo()
 		repo.listErr = boom
-		_, err := newUC(repo).List(ctx, uuid.NewString())
+		_, err := newUC(repo).List(ctx, uuid.NewString(), 0, 0)
 		if !errors.Is(err, boom) {
 			t.Fatalf("err = %v", err)
 		}
@@ -435,4 +443,30 @@ func TestGet_OneUserCannotReadAnotherUsersWorkspace(t *testing.T) {
 	if _, err := uc.Get(ctx, bob.String(), aliceWS.ID.String()); !errors.Is(err, domain.ErrWorkspaceNotFound) {
 		t.Errorf("Bob tidak boleh membaca milik Alice, dapat %v", err)
 	}
+}
+
+func TestList_PaginationDefaultsAndValidation(t *testing.T) {
+	t.Run("default 20 per halaman dari offset 0", func(t *testing.T) {
+		repo := newFakeRepo()
+		res, err := newUC(repo).List(ctx, uuid.NewString(), 0, 0)
+		if err != nil || repo.lastLimit != 20 || repo.lastOffset != 0 || res.Page != 1 || res.Limit != 20 {
+			t.Fatalf("err=%v limit=%d offset=%d res=%+v", err, repo.lastLimit, repo.lastOffset, res)
+		}
+	})
+	t.Run("offset dihitung dari page dan limit", func(t *testing.T) {
+		repo := newFakeRepo()
+		if _, err := newUC(repo).List(ctx, uuid.NewString(), 3, 10); err != nil ||
+			repo.lastLimit != 10 || repo.lastOffset != 20 {
+			t.Fatalf("err=%v limit=%d offset=%d", err, repo.lastLimit, repo.lastOffset)
+		}
+	})
+	t.Run("input tidak valid ditolak tanpa menyentuh repository", func(t *testing.T) {
+		for _, c := range [][2]int{{-1, 10}, {1, -1}, {1, 101}} {
+			repo := newFakeRepo()
+			_, err := newUC(repo).List(ctx, uuid.NewString(), c[0], c[1])
+			if !errors.Is(err, domain.ErrInvalidInput) || repo.listCalls != 0 {
+				t.Errorf("page=%d limit=%d: err=%v calls=%d", c[0], c[1], err, repo.listCalls)
+			}
+		}
+	})
 }

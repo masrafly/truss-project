@@ -12,6 +12,26 @@ Request body menggunakan JSON kecuali dinyatakan lain.
 
 Setiap respons menyertakan header `X-Request-ID`. Client boleh mengirim header yang sama (maks. 64 karakter; huruf, angka, `-`, `_`); jika tidak valid atau kosong, server membuat ID baru. Sertakan ID ini saat melaporkan masalah agar log server mudah ditelusuri.
 
+### Pagination
+
+Semua endpoint daftar memakai pagination yang sama: `?page=` (mulai 1, default 1) dan `?limit=` (default dan batas atas tergantung endpoint). Respons memuat `meta`:
+
+```json
+{ "data": [ ... ], "meta": { "page": 1, "limit": 20, "total": 57 } }
+```
+
+`total` adalah jumlah seluruh data yang boleh dilihat pemanggil, bukan jumlah item di halaman ini. Halaman di luar rentang mengembalikan `data: []` dengan `total` tetap benar. `page`/`limit` yang bukan angka, kurang dari 1, atau `limit` di atas batas menghasilkan `400` (tidak dipotong diam-diam).
+
+| Endpoint | `limit` default | `limit` maks. |
+|---|---|---|
+| `GET /workspaces` | 20 | 100 |
+| `GET /workspaces/{id}/members` | 20 | 100 |
+| `GET /workspaces/{id}/projects`, `GET /projects` | 20 | 100 |
+| `GET /projects/{id}/members` | 20 | 100 |
+| `GET /projects/{id}/tasks` | 20 | 100 |
+| `GET /tasks/{id}/comments` | 50 | 100 |
+| `GET /tasks/{id}/activities` | 50 | 100 |
+
 Respons memakai DTO terpisah dari entity domain, sehingga perubahan skema database tidak otomatis mengubah kontrak API.
 
 ## 2. Authentication
@@ -176,12 +196,12 @@ Possible errors: `400` input tidak valid, `401` token tidak ada/tidak valid atau
 
 `GET /workspaces`
 
-Mengembalikan hanya workspace tempat user menjadi anggota, terbaru lebih dulu. Belum ada pagination.
+Mengembalikan hanya workspace tempat user menjadi anggota, terbaru lebih dulu. Memakai pagination (lihat bagian 1).
 
 Success — `200 OK`:
 
 ```json
-{ "data": [ { "...objek workspace..." } ] }
+{ "data": [ { "...objek workspace..." } ], "meta": { "page": 1, "limit": 20, "total": 1 } }
 ```
 
 `data` selalu berupa array (`[]` jika kosong, bukan `null`).
@@ -255,7 +275,7 @@ Possible errors:
 
 Dapat dilihat semua anggota. Urutan: Owner, lalu Admin, lalu Member; di dalam satu peran urut waktu bergabung. User yang akunnya telah dihapus tidak ditampilkan.
 
-Success — `200 OK`: `{ "data": [ ...objek anggota... ] }` (selalu array).
+Success — `200 OK`: `{ "data": [ ...objek anggota... ], "meta": { ... } }` (`data` selalu array; lihat Pagination di bagian 1).
 
 ### 4.3 Remove member / leave
 
@@ -327,7 +347,7 @@ Possible errors: `400` input tidak valid, `401`, `403` peran workspace bukan Own
 
 `GET /projects` — project yang boleh dilihat di semua workspace pemanggil.
 
-Urutan terbaru lebih dulu; `data` selalu array. Belum ada pagination.
+Urutan terbaru lebih dulu; `data` selalu array. Memakai pagination (lihat bagian 1); `total` hanya menghitung project yang boleh dilihat pemanggil.
 
 ### 5.3 Get project
 
@@ -376,7 +396,7 @@ Aturan:
 
 Add — body `{ "email": "budi@example.com", "role": "member" }`. `email` wajib (di-trim, huruf kecil); `role` opsional (`admin`/`member`, default `member`). Success — `201`: `{ "message": "Anggota project berhasil ditambahkan", "data": { ...objek anggota... } }`. Objek anggota sama dengan anggota workspace (`user_id`, `name`, `email`, `role`, `joined_at`).
 
-List — `200`: `{ "data": [ ... ] }`, urutan Owner, Admin, Member, lalu waktu bergabung. User yang akunnya dihapus tidak ditampilkan.
+List — `200`: `{ "data": [ ... ], "meta": { ... } }` (pagination, lihat bagian 1), urutan Owner, Admin, Member, lalu waktu bergabung. User yang akunnya dihapus tidak ditampilkan.
 
 Remove — `204 No Content`.
 
@@ -503,7 +523,7 @@ Possible errors: `400`, `401`, `403`, `404`, `409` project diarsipkan.
 
 ### 6.6 Activity history
 
-`GET /tasks/{id}/activities` — riwayat task, terlama lebih dulu. Hanya dapat dibaca; tidak ada endpoint untuk membuat atau mengubah riwayat (PRD FR-08 #3).
+`GET /tasks/{id}/activities` — riwayat task, terlama lebih dulu, dengan pagination (lihat bagian 1; default 50 per halaman). Hanya dapat dibaca; tidak ada endpoint untuk membuat atau mengubah riwayat (PRD FR-08 #3).
 
 ```json
 {
@@ -516,7 +536,8 @@ Possible errors: `400`, `401`, `403`, `404`, `409` project diarsipkan.
       "new_value": "in_progress",
       "created_at": "2026-01-01T00:00:00Z"
     }
-  ]
+  ],
+  "meta": { "page": 1, "limit": 50, "total": 1 }
 }
 ```
 
