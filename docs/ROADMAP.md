@@ -46,10 +46,11 @@
 
 ## Phase 3 — User Profile
 
-- [ ] `GET /users/me`.
-- [ ] `PATCH /users/me`.
-- [ ] Profile validation.
-- [ ] Tests for profile access and update.
+- [x] Lihat profil: `GET /auth/me` (dipakai sebagai pengganti `GET /users/me`).
+- [x] Ubah nama: `PATCH /auth/me` (validasi trim, 1 sampai 100 karakter).
+- [x] Ganti password: `POST /auth/change-password` (verifikasi password lama, dibatasi per user, mencabut semua refresh token).
+- [x] Test use case, handler, dan repository (PostgreSQL 18); 6 uji mutasi tertangkap.
+- [ ] Ubah email (butuh verifikasi email; belum ada infrastruktur pengiriman email).
 
 ## Phase 4 — Workspace
 

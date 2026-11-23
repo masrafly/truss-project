@@ -19,6 +19,12 @@ type UserRepository interface {
 	Create(ctx context.Context, user *domain.User) error
 	FindByID(ctx context.Context, id uuid.UUID) (*domain.User, error)
 	FindByEmail(ctx context.Context, email string) (*domain.User, error)
+
+	// UpdateName mengubah nama dan mengembalikan user terbaru; domain.ErrUserNotFound bila tidak ada.
+	UpdateName(ctx context.Context, id uuid.UUID, name string) (*domain.User, error)
+
+	// UpdatePasswordHash mengganti hash password; domain.ErrUserNotFound bila user tidak ada.
+	UpdatePasswordHash(ctx context.Context, id uuid.UUID, hash string) error
 }
 
 type PasswordHasher interface {

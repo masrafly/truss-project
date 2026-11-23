@@ -23,6 +23,15 @@ type refreshRequest struct {
 	RefreshToken string `json:"refresh_token" binding:"required"`
 }
 
+type updateProfileRequest struct {
+	Name string `json:"name" binding:"required"`
+}
+
+type changePasswordRequest struct {
+	CurrentPassword string `json:"current_password" binding:"required"`
+	NewPassword     string `json:"new_password" binding:"required"`
+}
+
 type userResponse struct {
 	ID        string    `json:"internal_id"`
 	Name      string    `json:"name"`

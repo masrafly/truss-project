@@ -138,6 +138,8 @@ Secara default aplikasi menggunakan port `8080`, kecuali `APP_PORT` diatur di `.
 | POST | `/auth/logout` | Implemented; publik; mencabut satu sesi (rantai refresh token) |
 | POST | `/auth/logout-all` | Implemented; JWT; mencabut semua sesi user |
 | GET | `/auth/me` | Implemented; protected by JWT middleware, mengembalikan profil user |
+| PATCH | `/auth/me` | Implemented; JWT; ubah nama |
+| POST | `/auth/change-password` | Implemented; JWT; verifikasi password lama (salah = 403, dibatasi), mencabut semua sesi |
 | POST | `/workspaces` | Implemented; JWT; pembuat menjadi Owner |
 | GET | `/workspaces` | Implemented; JWT; hanya workspace milik user |
 | GET | `/workspaces/:id` | Implemented; JWT; non-anggota mendapat 404 |

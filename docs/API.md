@@ -190,6 +190,33 @@ Request: `{ "refresh_token": "..." }`. Mencabut seluruh rantai refresh token mil
 
 **Batasan:** access token yang sudah terbit tetap berlaku sampai kedaluwarsa (maksimal `ACCESS_TOKEN_TTL`, default 15 menit) walaupun user sudah logout. Karena itu masa berlaku access token sengaja pendek, dan otorisasi data tetap dibaca dari database pada setiap request.
 
+### 2.6 Update profile
+
+`PATCH /auth/me` — membutuhkan `Authorization: Bearer <access token>`.
+
+Request: `{ "name": "Budi Santoso" }`. Nama di-trim, tidak boleh kosong, maksimal 100 karakter. Email tidak dapat diubah lewat endpoint ini.
+
+Success — `200 OK`: `{ "message": "Profil berhasil diperbarui", "data": { ...objek user... } }`.
+
+Possible errors: `400` nama kosong/terlalu panjang atau body tidak valid; `401`; `404` akun sudah tidak ada.
+
+### 2.7 Change password
+
+`POST /auth/change-password` — membutuhkan `Authorization: Bearer <access token>`.
+
+Request:
+
+```json
+{ "current_password": "password lama", "new_password": "password baru minimal 8 karakter" }
+```
+
+Aturan:
+- Password saat ini diverifikasi dulu. Salah: `403` (bukan 401, agar client tidak mengira token-nya kedaluwarsa). Percobaan salah dibatasi per user (10 kali per 15 menit, setelah itu `429` dengan `Retry-After`), sehingga pemegang access token curian tidak dapat menebak password lewat endpoint ini. Penghitung ini terpisah dari penghitung login.
+- Password baru: 8 sampai 72 byte dan tidak boleh sama dengan password lama.
+- Berhasil: `204 No Content`. **Semua refresh token user dicabut**, jadi semua sesi (termasuk perangkat ini) harus login ulang setelah access token yang ada habis (maksimal 15 menit).
+
+Possible errors: `400` input tidak valid; `401`; `403` password saat ini salah; `404` akun tidak ada; `429` terlalu banyak percobaan salah.
+
 ## 3. Workspaces
 
 Semua endpoint workspace membutuhkan header `Authorization: Bearer <token>`. `created_by` dan `role` selalu ditentukan server dari identitas terautentikasi; nilai yang dikirim client di body diabaikan.

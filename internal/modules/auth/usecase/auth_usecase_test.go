@@ -19,6 +19,7 @@ type fakeRepo struct {
 	byEmail   map[string]*domain.User
 	createErr error
 	findErr   error // error tak terduga saat FindByEmail
+	updateErr error // error saat UpdateName/UpdatePasswordHash
 	created   int
 }
 
@@ -58,6 +59,40 @@ func (r *fakeRepo) FindByID(_ context.Context, id uuid.UUID) (*domain.User, erro
 		}
 	}
 	return nil, domain.ErrUserNotFound
+}
+
+func (r *fakeRepo) byID(id uuid.UUID) *domain.User {
+	for _, u := range r.byEmail {
+		if u.ID == id {
+			return u
+		}
+	}
+	return nil
+}
+
+func (r *fakeRepo) UpdateName(_ context.Context, id uuid.UUID, name string) (*domain.User, error) {
+	if r.updateErr != nil {
+		return nil, r.updateErr
+	}
+	u := r.byID(id)
+	if u == nil {
+		return nil, domain.ErrUserNotFound
+	}
+	u.Name = name
+	cp := *u
+	return &cp, nil
+}
+
+func (r *fakeRepo) UpdatePasswordHash(_ context.Context, id uuid.UUID, hash string) error {
+	if r.updateErr != nil {
+		return r.updateErr
+	}
+	u := r.byID(id)
+	if u == nil {
+		return domain.ErrUserNotFound
+	}
+	u.PasswordHash = hash
+	return nil
 }
 
 // fakeHasher: hash = "hashed:" + plain. Menghitung jumlah Compare.

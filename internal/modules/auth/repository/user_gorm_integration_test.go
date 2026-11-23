@@ -368,3 +368,116 @@ func TestRepository_CancelledContextReturnsError(t *testing.T) {
 		t.Error("context dibatalkan tidak boleh dipetakan menjadi ErrUserNotFound")
 	}
 }
+
+// ---------- UpdateName / UpdatePasswordHash ----------
+
+func TestUpdateName_PersistsAndKeepsOtherFields(t *testing.T) {
+	repo, db := setup(t)
+	ctx := context.Background()
+	u, other := newUser("budi@example.com"), newUser("lain@example.com")
+	for _, x := range []*domain.User{u, other} {
+		if err := repo.Create(ctx, x); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// Pastikan updated_at yang baru jelas lebih besar dari nilai awal.
+	mustExec(t, db, "UPDATE users SET updated_at = NOW() - interval '1 hour' WHERE internal_id = ?", u.ID)
+
+	got, err := repo.UpdateName(ctx, u.ID, "Nama Baru")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.ID != u.ID || got.Name != "Nama Baru" || got.Email != u.Email || got.PasswordHash != u.PasswordHash {
+		t.Errorf("hasil = %+v", got)
+	}
+	if time.Since(got.UpdatedAt) > time.Minute {
+		t.Errorf("updated_at harus maju: %v", got.UpdatedAt)
+	}
+	if got.CreatedAt.IsZero() {
+		t.Error("created_at harus terisi")
+	}
+	if o, _ := repo.FindByID(ctx, other.ID); o.Name != "Budi" {
+		t.Errorf("user lain tidak boleh berubah: %+v", o)
+	}
+}
+
+func TestUpdateName_UnknownAndSoftDeletedUsersNotFound(t *testing.T) {
+	repo, db := setup(t)
+	ctx := context.Background()
+	u := newUser("budi@example.com")
+	if err := repo.Create(ctx, u); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.UpdateName(ctx, uuid.New(), "X"); !errors.Is(err, domain.ErrUserNotFound) {
+		t.Errorf("user tidak ada: %v", err)
+	}
+	mustExec(t, db, "UPDATE users SET deleted_at = NOW() WHERE internal_id = ?", u.ID)
+	if _, err := repo.UpdateName(ctx, u.ID, "X"); !errors.Is(err, domain.ErrUserNotFound) {
+		t.Errorf("user terhapus tidak boleh diubah: %v", err)
+	}
+}
+
+func TestUpdateName_ValueTooLongIsNotMappedToNotFound(t *testing.T) {
+	repo, _ := setup(t)
+	ctx := context.Background()
+	u := newUser("budi@example.com")
+	if err := repo.Create(ctx, u); err != nil {
+		t.Fatal(err)
+	}
+	_, err := repo.UpdateName(ctx, u.ID, strings.Repeat("a", 101))
+	if err == nil || errors.Is(err, domain.ErrUserNotFound) {
+		t.Errorf("harus error database biasa, dapat %v", err)
+	}
+}
+
+func TestUpdatePasswordHash_PersistsOnlyForThatUser(t *testing.T) {
+	repo, db := setup(t)
+	ctx := context.Background()
+	u, other := newUser("budi@example.com"), newUser("lain@example.com")
+	for _, x := range []*domain.User{u, other} {
+		if err := repo.Create(ctx, x); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := repo.UpdatePasswordHash(ctx, u.ID, "$2a$10$hash-baru"); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := repo.FindByID(ctx, u.ID); got.PasswordHash != "$2a$10$hash-baru" {
+		t.Errorf("hash = %q", got.PasswordHash)
+	}
+	if got, _ := repo.FindByID(ctx, other.ID); got.PasswordHash != other.PasswordHash {
+		t.Error("hash user lain tidak boleh berubah")
+	}
+	var recent bool
+	if err := db.Raw("SELECT updated_at > NOW() - interval '1 minute' FROM users WHERE internal_id = ?", u.ID).Row().Scan(&recent); err != nil || !recent {
+		t.Errorf("updated_at harus ikut diperbarui (err=%v)", err)
+	}
+}
+
+func TestUpdatePasswordHash_UnknownAndSoftDeletedUsersNotFound(t *testing.T) {
+	repo, db := setup(t)
+	ctx := context.Background()
+	u := newUser("budi@example.com")
+	if err := repo.Create(ctx, u); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.UpdatePasswordHash(ctx, uuid.New(), "h"); !errors.Is(err, domain.ErrUserNotFound) {
+		t.Errorf("user tidak ada: %v", err)
+	}
+	mustExec(t, db, "UPDATE users SET deleted_at = NOW() WHERE internal_id = ?", u.ID)
+	if err := repo.UpdatePasswordHash(ctx, u.ID, "h"); !errors.Is(err, domain.ErrUserNotFound) {
+		t.Errorf("user terhapus tidak boleh diubah: %v", err)
+	}
+}
+
+func TestUpdate_CancelledContextReturnsError(t *testing.T) {
+	repo, _ := setup(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := repo.UpdateName(ctx, uuid.New(), "X"); err == nil || errors.Is(err, domain.ErrUserNotFound) {
+		t.Errorf("UpdateName: %v", err)
+	}
+	if err := repo.UpdatePasswordHash(ctx, uuid.New(), "h"); err == nil || errors.Is(err, domain.ErrUserNotFound) {
+		t.Errorf("UpdatePasswordHash: %v", err)
+	}
+}

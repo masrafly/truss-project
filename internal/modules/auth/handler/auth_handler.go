@@ -24,6 +24,8 @@ type authUseCase interface {
 	Refresh(ctx context.Context, refreshToken string) (*usecase.TokenPair, error)
 	Logout(ctx context.Context, refreshToken string) error
 	LogoutAll(ctx context.Context, userID string) error
+	UpdateProfile(ctx context.Context, userID, name string) (*domain.User, error)
+	ChangePassword(ctx context.Context, userID, current, next string) error
 }
 
 type AuthHandler struct {
@@ -48,6 +50,8 @@ func (h *AuthHandler) RegisterRoutes(r gin.IRouter, authMW gin.HandlerFunc, publ
 	g.POST("/logout", chain(publicMW, h.Logout)...)
 	g.POST("/logout-all", authMW, h.LogoutAll)
 	g.GET("/me", authMW, h.Me)
+	g.PATCH("/me", authMW, h.UpdateMe)
+	g.POST("/change-password", authMW, h.ChangePassword)
 }
 
 // chain menyalin middleware ke slice baru sebelum menambahkan handler, agar tidak
@@ -176,6 +180,45 @@ func (h *AuthHandler) Me(c *gin.Context) {
 	})
 }
 
+// UpdateMe mengubah nama user yang sedang login.
+func (h *AuthHandler) UpdateMe(c *gin.Context) {
+	userID, ok := middleware.UserIDFromContext(c)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"message": "Identitas user tidak ditemukan"})
+		return
+	}
+	var req updateProfileRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"message": "Input tidak valid"})
+		return
+	}
+	user, err := h.auth.UpdateProfile(c.Request.Context(), userID, req.Name)
+	if err != nil {
+		h.writeError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"message": "Profil berhasil diperbarui", "data": toUserResponse(user)})
+}
+
+// ChangePassword mengganti password dan mencabut semua sesi (login ulang diperlukan).
+func (h *AuthHandler) ChangePassword(c *gin.Context) {
+	userID, ok := middleware.UserIDFromContext(c)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"message": "Identitas user tidak ditemukan"})
+		return
+	}
+	var req changePasswordRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"message": "Input tidak valid"})
+		return
+	}
+	if err := h.auth.ChangePassword(c.Request.Context(), userID, req.CurrentPassword, req.NewPassword); err != nil {
+		h.writeError(c, err)
+		return
+	}
+	c.Status(http.StatusNoContent)
+}
+
 // writeError memetakan error domain ke status HTTP. Error tak terduga dicatat
 // di log (dengan request_id) dan client hanya menerima pesan generik.
 func (h *AuthHandler) writeError(c *gin.Context, err error) {
@@ -186,6 +229,8 @@ func (h *AuthHandler) writeError(c *gin.Context, err error) {
 		c.JSON(http.StatusConflict, gin.H{"message": err.Error()})
 	case errors.Is(err, domain.ErrInvalidCredentials):
 		c.JSON(http.StatusUnauthorized, gin.H{"message": err.Error()})
+	case errors.Is(err, domain.ErrWrongPassword):
+		c.JSON(http.StatusForbidden, gin.H{"message": err.Error()})
 	case errors.Is(err, domain.ErrInvalidRefreshToken):
 		c.JSON(http.StatusUnauthorized, gin.H{"message": err.Error()})
 	case errors.Is(err, domain.ErrUserNotFound):

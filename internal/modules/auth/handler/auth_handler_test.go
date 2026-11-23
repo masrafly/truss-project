@@ -33,12 +33,16 @@ type fakeUC struct {
 	refreshFn  func(ctx context.Context, token string) (*usecase.TokenPair, error)
 	logoutFn   func(ctx context.Context, token string) error
 	logoutAll  func(ctx context.Context, userID string) error
+	updateFn   func(ctx context.Context, userID, name string) (*domain.User, error)
+	changePwFn func(ctx context.Context, userID, current, next string) error
 
 	registerCalls, loginCalls, profileCalls   int
 	gotName, gotEmail, gotPassword            string
 	gotUserID                                 string
 	refreshCalls, logoutCalls, logoutAllCalls int
 	gotRefreshToken                           string
+	updateCalls, changePwCalls                int
+	gotNewName, gotCurrentPw, gotNewPw        string
 }
 
 func (f *fakeUC) Register(ctx context.Context, name, email, password string) (*domain.User, error) {
@@ -75,6 +79,18 @@ func (f *fakeUC) LogoutAll(ctx context.Context, userID string) error {
 	f.logoutAllCalls++
 	f.gotUserID = userID
 	return f.logoutAll(ctx, userID)
+}
+
+func (f *fakeUC) UpdateProfile(ctx context.Context, userID, name string) (*domain.User, error) {
+	f.updateCalls++
+	f.gotUserID, f.gotNewName = userID, name
+	return f.updateFn(ctx, userID, name)
+}
+
+func (f *fakeUC) ChangePassword(ctx context.Context, userID, current, next string) error {
+	f.changePwCalls++
+	f.gotUserID, f.gotCurrentPw, f.gotNewPw = userID, current, next
+	return f.changePwFn(ctx, userID, current, next)
 }
 
 type fakeValidator struct{}
@@ -163,13 +179,13 @@ func TestRegisterRoutes(t *testing.T) {
 	for _, ri := range r.Routes() {
 		got[ri.Method+" "+ri.Path] = true
 	}
-	for _, want := range []string{"POST /auth/register", "POST /auth/login", "POST /auth/refresh", "POST /auth/logout", "POST /auth/logout-all", "GET /auth/me"} {
+	for _, want := range []string{"POST /auth/register", "POST /auth/login", "POST /auth/refresh", "POST /auth/logout", "POST /auth/logout-all", "GET /auth/me", "PATCH /auth/me", "POST /auth/change-password"} {
 		if !got[want] {
 			t.Errorf("route %q harus terdaftar; ada: %v", want, got)
 		}
 	}
-	if len(got) != 6 {
-		t.Errorf("harapannya tepat 6 route, dapat %d: %v", len(got), got)
+	if len(got) != 8 {
+		t.Errorf("harapannya tepat 8 route, dapat %d: %v", len(got), got)
 	}
 }
 

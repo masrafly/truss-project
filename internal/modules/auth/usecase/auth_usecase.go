@@ -323,6 +323,77 @@ func (u *AuthUseCase) recordFailure(email string) {
 	}
 }
 
+// UpdateProfile mengubah nama user.
+func (u *AuthUseCase) UpdateProfile(ctx context.Context, userID, name string) (*domain.User, error) {
+	id, err := uuid.Parse(userID)
+	if err != nil {
+		return nil, domain.ErrUserNotFound
+	}
+	name = strings.TrimSpace(name)
+	if name == "" || utf8.RuneCountInString(name) > maxNameLength {
+		return nil, domain.ErrInvalidInput
+	}
+	user, err := u.users.UpdateName(ctx, id, name)
+	if err != nil {
+		return nil, err
+	}
+	user.PasswordHash = ""
+	return user, nil
+}
+
+// ChangePassword mengganti password setelah memverifikasi password saat ini, lalu mencabut
+// SEMUA refresh token user (sesi lain, termasuk milik pencuri akun, tidak dapat diperpanjang).
+// Percobaan password saat ini yang salah dibatasi per user, sama seperti login, agar
+// pencuri access token tidak dapat menebak password lewat endpoint ini.
+func (u *AuthUseCase) ChangePassword(ctx context.Context, userID, current, next string) error {
+	id, err := uuid.Parse(userID)
+	if err != nil {
+		return domain.ErrUserNotFound
+	}
+	if current == "" || len(current) > maxPasswordLength || !validPassword(next) || next == current {
+		return domain.ErrInvalidInput
+	}
+
+	key := "chpw:" + id.String()
+	if u.throttle != nil {
+		if blocked, retry := u.throttle.Blocked(key); blocked {
+			u.log.WarnContext(ctx, "ganti password ditolak: terlalu banyak percobaan gagal", "user_id", id)
+			return &domain.TooManyAttemptsError{RetryAfter: retry}
+		}
+	}
+
+	user, err := u.users.FindByID(ctx, id)
+	if err != nil {
+		return err
+	}
+	if err := u.hasher.Compare(user.PasswordHash, current); err != nil {
+		u.log.WarnContext(ctx, "ganti password gagal: password saat ini salah", "user_id", id)
+		u.recordFailure(key)
+		return domain.ErrWrongPassword
+	}
+	if u.throttle != nil {
+		u.throttle.Reset(key)
+	}
+
+	hash, err := u.hasher.Hash(next)
+	if err != nil {
+		return err
+	}
+	// Cabut sesi LEBIH DULU: bila langkah berikutnya gagal, user hanya perlu login ulang
+	// dengan password lama. Urutan terbalik dapat meninggalkan sesi lama hidup setelah
+	// password diganti.
+	if u.refresh != nil {
+		if err := u.refresh.RevokeAllForUser(ctx, id, u.now()); err != nil {
+			return err
+		}
+	}
+	if err := u.users.UpdatePasswordHash(ctx, id, hash); err != nil {
+		return err
+	}
+	u.log.InfoContext(ctx, "password diganti", "user_id", id)
+	return nil
+}
+
 func (u *AuthUseCase) GetProfile(ctx context.Context, userID string) (*domain.User, error) {
 	id, err := uuid.Parse(userID)
 	if err != nil {

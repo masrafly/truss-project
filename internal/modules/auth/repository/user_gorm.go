@@ -85,6 +85,37 @@ func (r *UserGormRepository) FindByEmail(ctx context.Context, email string) (*do
 	return rec.toDomain(), nil
 }
 
+func (r *UserGormRepository) UpdateName(ctx context.Context, id uuid.UUID, name string) (*domain.User, error) {
+	var rows []userRecord
+	err := r.db.WithContext(ctx).Raw(
+		`UPDATE users SET name = ?, updated_at = NOW()
+		  WHERE internal_id = ? AND deleted_at IS NULL
+		RETURNING internal_id, name, email, password_hash, created_at, updated_at`,
+		name, id,
+	).Scan(&rows).Error
+	if err != nil {
+		return nil, err
+	}
+	if len(rows) == 0 {
+		return nil, domain.ErrUserNotFound
+	}
+	return rows[0].toDomain(), nil
+}
+
+func (r *UserGormRepository) UpdatePasswordHash(ctx context.Context, id uuid.UUID, hash string) error {
+	res := r.db.WithContext(ctx).Exec(
+		"UPDATE users SET password_hash = ?, updated_at = NOW() WHERE internal_id = ? AND deleted_at IS NULL",
+		hash, id,
+	)
+	if res.Error != nil {
+		return res.Error
+	}
+	if res.RowsAffected == 0 {
+		return domain.ErrUserNotFound
+	}
+	return nil
+}
+
 // translate menerjemahkan error GORM ke error domain.
 func translate(err error) error {
 	if errors.Is(err, gorm.ErrRecordNotFound) {

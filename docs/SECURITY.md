@@ -51,6 +51,7 @@ JWT yang ditandatangani bukan token terenkripsi. Payload dapat dibaca oleh pemeg
 - Masa berlaku `REFRESH_TOKEN_TTL` (default 30 hari, batas 1 jam sampai 90 hari, harus lebih lama dari access token). Token kedaluwarsa milik user dibersihkan saat user itu login lagi.
 - Logout mencabut satu rantai (satu perangkat); `logout-all` mencabut semua. Akun yang dihapus tidak dapat refresh.
 - Endpoint publik `refresh` dan `logout` dibatasi rate limit per IP yang sama dengan login.
+- Ganti password (`POST /auth/change-password`) memverifikasi password lama dengan pembatas percobaan per user, lalu mencabut semua refresh token **sebelum** menyimpan hash baru: bila penyimpanan gagal, sesi lama sudah mati dan password lama tetap berlaku (login ulang cukup), bukan sebaliknya.
 - Sisa risiko: pencuri yang memakai token **lebih dulu** daripada pemilik sah mendapat sesi sampai pemilik memakai token lamanya (yang memicu pencabutan rantai) atau sampai kedaluwarsa. Simpan refresh token di tempat aman (penyimpanan terenkripsi OS atau cookie `HttpOnly` pada frontend), bukan di `localStorage` jika memungkinkan.
 
 ## 4. Authentication vs Authorization

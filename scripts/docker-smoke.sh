@@ -6,7 +6,7 @@
 #
 # Yang diperiksa: image tidak memuat .env/.git/docs/test; HEALTHCHECK menjadi healthy; /healthz dan
 # /readyz 200; alur register -> login -> workspace -> project -> task berjalan; refresh token
-# (rotasi, pemakaian ulang ditolak, logout); image berjalan
+# (rotasi, pemakaian ulang ditolak, logout); ubah nama dan ganti password; image berjalan
 # sebagai non-root; `docker stop` (SIGTERM) berhenti rapi dengan exit code 0.
 # Semua kredensial dibuat acak per-run dan dibuang bersama container.
 set -euo pipefail
@@ -144,13 +144,25 @@ RT3="$(curl -s -X POST "$BASE/auth/login" -H "$JSON" -d '{"email":"smoke@example
 [ "$(code -X POST "$BASE/auth/refresh" -H "$JSON" -d "{\"refresh_token\":\"$RT3\"}")" = "401" ]   || fail "refresh token harus mati setelah logout"
 ok "refresh token: rotasi, pemakaian ulang ditolak, logout mencabut"
 
+# ---------- profil dan ganti password ----------
+[ "$(code -X PATCH "$BASE/auth/me" -H "$JSON" -H "$AUTH" -d '{"name":"Smoke Baru"}')" = "200" ] || fail "ubah nama bukan 200"
+[ "$(curl -s "$BASE/auth/me" -H "$AUTH" | json_field name)" = "Smoke Baru" ] || fail "nama baru tidak terbaca di /auth/me"
+SESSION="$(curl -s -X POST "$BASE/auth/login" -H "$JSON" -d '{"email":"smoke@example.com","password":"password123"}' | json_field refresh_token)"
+[ -n "$SESSION" ] || fail "login untuk uji ganti password tidak menghasilkan refresh_token"
+[ "$(code -X POST "$BASE/auth/change-password" -H "$JSON" -H "$AUTH" -d '{"current_password":"salahsalah","new_password":"passwordBaru1"}')" = "403" ]   || fail "password saat ini salah harus 403"
+[ "$(code -X POST "$BASE/auth/change-password" -H "$JSON" -H "$AUTH" -d '{"current_password":"password123","new_password":"passwordBaru1"}')" = "204" ]   || fail "ganti password bukan 204"
+[ "$(code -X POST "$BASE/auth/refresh" -H "$JSON" -d "{\"refresh_token\":\"$SESSION\"}")" = "401" ]   || fail "sesi lama harus mati setelah ganti password"
+[ "$(code -X POST "$BASE/auth/login" -H "$JSON" -d '{"email":"smoke@example.com","password":"password123"}')" = "401" ]   || fail "password lama harus ditolak setelah diganti"
+[ "$(code -X POST "$BASE/auth/login" -H "$JSON" -d '{"email":"smoke@example.com","password":"passwordBaru1"}')" = "200" ]   || fail "password baru harus bisa login"
+ok "ubah nama, ganti password (403 bila salah), sesi lama dicabut, password baru berlaku"
+
 # ---------- shutdown rapi ----------
 docker stop -t 10 "$API" >/dev/null
 EXIT_CODE="$(docker inspect -f '{{.State.ExitCode}}' "$API")"
 [ "$EXIT_CODE" = "0" ] || fail "docker stop (SIGTERM) menghasilkan exit code $EXIT_CODE, harapannya 0 (shutdown rapi)"
 LOGS="$(docker logs "$API" 2>&1)"
 grep -q "server berhenti" <<<"$LOGS" || fail "log tidak memuat 'server berhenti'"
-if grep -Eq "$JWT_SECRET|$PG_PASSWORD|password123" <<<"$LOGS"; then
+if grep -Eq "$JWT_SECRET|$PG_PASSWORD|password123|passwordBaru1" <<<"$LOGS"; then
   fail "log memuat rahasia (secret JWT, password database, atau password user)"
 fi
 if grep -q '/healthz\|/readyz' <<<"$LOGS"; then

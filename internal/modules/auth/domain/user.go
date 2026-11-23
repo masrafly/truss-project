@@ -38,7 +38,10 @@ var (
 	ErrInvalidInput       = errors.New("input tidak valid")
 	ErrEmailAlreadyUsed   = errors.New("email sudah digunakan")
 	ErrInvalidCredentials = errors.New("email atau password salah")
-	ErrUserNotFound       = errors.New("user tidak ditemukan")
+	// ErrWrongPassword: password saat ini salah pada ganti password (403, bukan 401, agar client
+	// tidak mengira token-nya kedaluwarsa).
+	ErrWrongPassword = errors.New("password saat ini salah")
+	ErrUserNotFound  = errors.New("user tidak ditemukan")
 
 	// ErrInvalidRefreshToken: refresh token tidak dikenal, kedaluwarsa, sudah dicabut, atau
 	// sudah dipakai (rotasi). Semua kasus sengaja menghasilkan pesan yang sama (401).

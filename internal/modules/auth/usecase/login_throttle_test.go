@@ -133,3 +133,10 @@ func (errRepo) FindByID(context.Context, uuid.UUID) (*domain.User, error) {
 func (errRepo) FindByEmail(context.Context, string) (*domain.User, error) {
 	return nil, errors.New("db mati")
 }
+
+func (errRepo) UpdateName(context.Context, uuid.UUID, string) (*domain.User, error) {
+	return nil, errors.New("db mati")
+}
+func (errRepo) UpdatePasswordHash(context.Context, uuid.UUID, string) error {
+	return errors.New("db mati")
+}
