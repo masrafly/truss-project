@@ -182,7 +182,8 @@ func writeError(c *gin.Context, log *slog.Logger, err error) {
 		errors.Is(err, domain.ErrWorkspaceUserNotFound):
 		c.JSON(http.StatusNotFound, gin.H{"message": err.Error()})
 	case errors.Is(err, domain.ErrAlreadyMember),
-		errors.Is(err, domain.ErrCannotRemoveOwner):
+		errors.Is(err, domain.ErrCannotRemoveOwner),
+		errors.Is(err, domain.ErrCannotChangeOwnerRole):
 		c.JSON(http.StatusConflict, gin.H{"message": err.Error()})
 	default:
 		log.ErrorContext(c.Request.Context(), "error tak terduga",

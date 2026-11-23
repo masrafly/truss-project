@@ -288,6 +288,16 @@ Possible errors:
 - `401` belum terautentikasi.
 - `404` workspace tidak ada, **atau user bukan anggotanya**, atau `id` bukan UUID. Respons sengaja identik agar orang luar tidak dapat mengetahui apakah sebuah workspace ada.
 
+### 3.4 Delete workspace
+
+`DELETE /workspaces/{id}` — hanya **Owner**.
+
+Request (body wajib): `{ "confirm_name": "Tim Backend" }` — nama workspace persis (spasi di awal/akhir diabaikan; huruf besar-kecil dibedakan). Konfirmasi ini mencegah penghapusan karena salah klik.
+
+Success — `204 No Content`. Penghapusan **permanen dan tidak dapat dibatalkan**: seluruh anggota, project, anggota project, task, komentar, dan riwayat di dalam workspace ikut terhapus dalam satu transaksi. Akun user tidak terhapus.
+
+Possible errors: `400` `confirm_name` kosong atau tidak cocok dengan nama workspace; `401`; `403` bukan Owner (diperiksa sebelum konfirmasi, sehingga non-Owner tidak dapat mengetahui nama workspace lewat perbedaan respons); `404` bukan anggota atau workspace tidak ada.
+
 ## 4. Workspace Members
 
 Semua endpoint membutuhkan header `Authorization: Bearer <token>`.
@@ -364,6 +374,30 @@ Possible errors:
 - `409` target adalah Owner, **atau** target masih menjadi Owner suatu project di workspace ini (alihkan/hapus project tersebut lebih dulu).
 
 Saat anggota keluar/dihapus, seluruh keanggotaannya pada project di workspace tersebut ikut terhapus dalam transaksi yang sama.
+
+### 4.4 Change member role
+
+`PATCH /workspaces/{id}/members/{userId}` — hanya **Owner**.
+
+Request: `{ "role": "admin" }` atau `{ "role": "member" }`. Success — `200 OK`: `{ "message": "...", "data": { ...objek anggota terbaru... } }`.
+
+Aturan:
+- Admin dan Member tidak dapat mengubah peran siapa pun (`403`).
+- Peran `owner` tidak dapat diberikan lewat endpoint ini, dan peran Owner tidak dapat diubah (`409`): gunakan transfer kepemilikan (4.5).
+- Mengubah ke peran yang sama berhasil (idempoten).
+- Pemeriksaan ulang dilakukan pada baris yang terkunci di database, sehingga Owner yang baru saja diturunkan di permintaan lain tidak dapat lolos.
+
+Possible errors: `400` role tidak valid atau body tidak valid; `401`; `403` bukan Owner; `404` pemanggil bukan anggota, atau `userId` bukan anggota; `409` target adalah Owner.
+
+### 4.5 Transfer ownership
+
+`POST /workspaces/{id}/transfer-ownership` — hanya **Owner**.
+
+Request: `{ "user_id": "UUID anggota workspace" }`. Success — `200 OK`.
+
+Dalam satu transaksi atomik, target menjadi **Owner** dan Owner lama menjadi **Admin**; workspace selalu memiliki tepat satu Owner dan tidak pernah ada keadaan di antaranya. Tidak ada tahap persetujuan penerima: target harus sudah menjadi anggota. Setelah transfer, Owner lama dapat keluar dari workspace seperti Admin biasa (selama ia bukan Owner suatu project, lihat 4.3).
+
+Possible errors: `400` `user_id` kosong atau sama dengan pemanggil; `401`; `403` bukan Owner; `404` pemanggil bukan anggota atau `user_id` bukan anggota.
 
 ## 5. Projects
 
@@ -463,7 +497,7 @@ Possible errors: `401`, `403` (bukan Owner project/Owner workspace), `404`.
 
 Aturan:
 - Yang dapat ditambahkan hanya **anggota workspace** project tersebut (PRD FR-04). Email yang tidak terdaftar dan email milik user di luar workspace sama-sama menghasilkan `404` dengan pesan yang identik, agar endpoint ini tidak bisa dipakai untuk menebak email terdaftar.
-- Role `owner` tidak dapat diberikan. Owner project (pembuatnya) tidak dapat dihapus maupun keluar sampai fitur transfer kepemilikan tersedia.
+- Role `owner` tidak dapat diberikan lewat penambahan anggota. Owner project tidak dapat dihapus maupun keluar; pindahkan kepemilikannya lebih dulu (lihat 5.7).
 - Ketika seseorang keluar dari workspace, keanggotaan project-nya ikut terhapus (lihat bagian 4.3).
 
 Add — body `{ "email": "budi@example.com", "role": "member" }`. `email` wajib (di-trim, huruf kecil); `role` opsional (`admin`/`member`, default `member`). Success — `201`: `{ "message": "Anggota project berhasil ditambahkan", "data": { ...objek anggota... } }`. Objek anggota sama dengan anggota workspace (`user_id`, `name`, `email`, `role`, `joined_at`).
@@ -473,6 +507,24 @@ List — `200`: `{ "data": [ ... ], "meta": { ... } }` (pagination, lihat bagian
 Remove — `204 No Content`.
 
 Possible errors: `400` email kosong atau role tidak valid; `401`; `403` peran tidak cukup; `404` project tidak terlihat, user bukan anggota workspace, atau `userId` bukan anggota project; `409` sudah menjadi anggota, atau target adalah Owner project.
+
+### 5.7 Change project member role and transfer ownership
+
+`PATCH /projects/{id}/members/{userId}` — body `{ "role": "admin" | "member" }`. Success `200` dengan objek anggota terbaru.
+
+`POST /projects/{id}/transfer-ownership` — body `{ "user_id": "UUID" }`. Success `200`. Atomik: target menjadi Owner project dan Owner lama menjadi Admin project; project selalu memiliki tepat satu Owner.
+
+Siapa yang boleh (keduanya): **Owner project, atau Owner/Admin workspace**. Admin project dan Member project mendapat `403`; yang tidak dapat melihat project mendapat `404`.
+
+| Aksi | Pengelola (Owner project, Owner/Admin workspace) | Admin project | Member project |
+|---|---|---|---|
+| Ubah peran Admin <-> Member | ya | **403** | **403** |
+| Ubah peran Owner project | **409** (gunakan transfer) | **403** | **403** |
+| Transfer kepemilikan | ya | **403** | **403** |
+
+Aturan transfer: target harus **anggota project dan masih anggota workspace**. Transfer yang berlomba dengan target yang sedang keluar dari workspace diselesaikan dengan kunci baris: salah satunya menang (target menjadi Owner dan keluarnya ditolak 409, atau target keluar lebih dulu dan transfer ditolak 404), project tidak pernah tanpa Owner. Owner lama yang menjadi Admin dapat keluar dari project dan workspace.
+
+Possible errors: `400` role/`user_id` tidak valid, atau target sudah Owner; `401`; `403`; `404` project tidak terlihat atau target bukan anggota; `409` target adalah Owner (ubah peran).
 
 ## 6. Tasks
 

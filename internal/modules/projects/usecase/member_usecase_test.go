@@ -23,6 +23,14 @@ type fakeMemberRepo struct {
 	lastLimit, lastOffset                                 int
 	lastLookup                                            string
 	lastRemoved                                           struct{ pid, uid, actor uuid.UUID }
+
+	changeErr, transferErr     error
+	changeCalls, transferCalls int
+	lastChange                 struct {
+		pid, uid uuid.UUID
+		role     domain.ProjectRole
+	}
+	lastTransfer struct{ pid, uid uuid.UUID }
 }
 
 func (r *fakeMemberRepo) FindWorkspaceMemberByEmail(_ context.Context, pid uuid.UUID, email string) (*domain.UserRef, error) {
@@ -402,4 +410,49 @@ func TestMemberList_PaginationDefaultsAndValidation(t *testing.T) {
 	if f.mrepo.listMembersCalls != calls {
 		t.Error("repository tidak boleh dipanggil untuk pagination tidak valid")
 	}
+}
+
+// ---------- fake: ubah peran & transfer kepemilikan ----------
+
+func (r *fakeMemberRepo) ChangeMemberRole(
+	_ context.Context,
+	pid, uid uuid.UUID,
+	role domain.ProjectRole,
+) (*domain.Member, error) {
+	r.changeCalls++
+	r.lastChange.pid, r.lastChange.uid, r.lastChange.role = pid, uid, role
+	if r.changeErr != nil {
+		return nil, r.changeErr
+	}
+	cur, ok := r.pRoles[pid][uid]
+	if !ok {
+		return nil, domain.ErrMemberNotFound
+	}
+	if cur == domain.ProjectOwner {
+		return nil, domain.ErrCannotChangeOwnerRole
+	}
+	r.pRoles[pid][uid] = role
+	return &domain.Member{UserID: uid, Role: role}, nil
+}
+
+func (r *fakeMemberRepo) TransferOwnership(_ context.Context, pid, uid uuid.UUID) error {
+	r.transferCalls++
+	r.lastTransfer.pid, r.lastTransfer.uid = pid, uid
+	if r.transferErr != nil {
+		return r.transferErr
+	}
+	cur, ok := r.pRoles[pid][uid]
+	if !ok {
+		return domain.ErrMemberNotFound
+	}
+	if cur == domain.ProjectOwner {
+		return domain.ErrInvalidInput
+	}
+	for id, role := range r.pRoles[pid] {
+		if role == domain.ProjectOwner {
+			r.pRoles[pid][id] = domain.ProjectAdmin
+		}
+	}
+	r.pRoles[pid][uid] = domain.ProjectOwner
+	return nil
 }

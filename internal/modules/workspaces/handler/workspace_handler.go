@@ -17,6 +17,7 @@ type workspaceUseCase interface {
 	Create(ctx context.Context, userID, name string, description *string) (*domain.WorkspaceAccess, error)
 	List(ctx context.Context, userID string, page, limit int) (*pagination.Result[domain.WorkspaceAccess], error)
 	Get(ctx context.Context, userID, workspaceID string) (*domain.WorkspaceAccess, error)
+	Delete(ctx context.Context, userID, workspaceID, confirmName string) error
 }
 
 type WorkspaceHandler struct {
@@ -37,6 +38,25 @@ func (h *WorkspaceHandler) RegisterRoutes(r gin.IRouter, authMW gin.HandlerFunc)
 	g.POST("", h.Create)
 	g.GET("", h.List)
 	g.GET("/:id", h.Get)
+	g.DELETE("/:id", h.Delete)
+}
+
+// Delete menghapus workspace beserta seluruh isinya. Body wajib memuat confirm_name.
+func (h *WorkspaceHandler) Delete(c *gin.Context) {
+	userID, ok := currentUserID(c)
+	if !ok {
+		return
+	}
+	var req deleteWorkspaceRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"message": "Input tidak valid"})
+		return
+	}
+	if err := h.uc.Delete(c.Request.Context(), userID, c.Param("id"), req.ConfirmName); err != nil {
+		writeError(c, h.log, err)
+		return
+	}
+	c.Status(http.StatusNoContent)
 }
 
 func (h *WorkspaceHandler) Create(c *gin.Context) {

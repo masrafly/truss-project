@@ -16,6 +16,8 @@ type memberUseCase interface {
 	Add(ctx context.Context, actorID, projectID, email, role string) (*domain.Member, error)
 	List(ctx context.Context, actorID, projectID string, page, limit int) (*pagination.Result[domain.Member], error)
 	Remove(ctx context.Context, actorID, projectID, targetUserID string) error
+	ChangeRole(ctx context.Context, actorID, projectID, targetUserID, role string) (*domain.Member, error)
+	TransferOwnership(ctx context.Context, actorID, projectID, targetUserID string) error
 }
 
 type MemberHandler struct {
@@ -35,7 +37,45 @@ func (h *MemberHandler) RegisterRoutes(r gin.IRouter, authMW gin.HandlerFunc) {
 	g := r.Group("/projects/:id/members", authMW)
 	g.POST("", h.Add)
 	g.GET("", h.List)
+	g.PATCH("/:userId", h.ChangeRole)
 	g.DELETE("/:userId", h.Remove)
+
+	r.POST("/projects/:id/transfer-ownership", authMW, h.TransferOwnership)
+}
+
+func (h *MemberHandler) ChangeRole(c *gin.Context) {
+	actorID, ok := currentUserID(c)
+	if !ok {
+		return
+	}
+	var req changeRoleRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"message": "Input tidak valid"})
+		return
+	}
+	m, err := h.uc.ChangeRole(c.Request.Context(), actorID, c.Param("id"), c.Param("userId"), req.Role)
+	if err != nil {
+		writeError(c, h.log, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"message": "Peran anggota project berhasil diubah", "data": toMemberResponse(m)})
+}
+
+func (h *MemberHandler) TransferOwnership(c *gin.Context) {
+	actorID, ok := currentUserID(c)
+	if !ok {
+		return
+	}
+	var req transferOwnershipRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"message": "Input tidak valid"})
+		return
+	}
+	if err := h.uc.TransferOwnership(c.Request.Context(), actorID, c.Param("id"), req.UserID); err != nil {
+		writeError(c, h.log, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"message": "Kepemilikan project berhasil dipindahkan"})
 }
 
 func (h *MemberHandler) Add(c *gin.Context) {

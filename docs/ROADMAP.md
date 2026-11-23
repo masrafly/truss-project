@@ -64,8 +64,8 @@
 - [x] Role and permission rules (Owner/Admin/Member) dengan matriks izin teruji; 403 untuk anggota tanpa izin, 404 untuk non-anggota.
 - [x] Unit test (domain, use case, handler) dan integration test repository anggota + direktori user (dijalankan terhadap PostgreSQL 18 dan lulus).
 - [ ] Undangan untuk email yang belum terdaftar (saat ini hanya user terdaftar).
-- [ ] Ubah role anggota dan transfer kepemilikan (diperlukan agar Owner dapat keluar dari workspace).
-- [ ] Hapus workspace oleh Owner.
+- [x] Ubah role anggota (hanya Owner; admin <-> member) dan transfer kepemilikan atomik (Owner lama menjadi Admin, sehingga dapat keluar).
+- [x] Hapus workspace oleh Owner dengan konfirmasi nama (cascade seluruh isi).
 - [x] Keluarnya anggota dari workspace ikut menghapus keanggotaan project (atomik); Owner project ditolak dengan 409.
 - [x] Pagination untuk `GET /workspaces` dan daftar anggota workspace.
 
@@ -82,7 +82,7 @@
 - [x] Matriks izin anggota project teruji (pengelola / Admin project / Member project); 14 uji mutasi tertangkap.
 - [ ] Jalankan integration test anggota project (termasuk uji kunci AddMember vs keluar workspace) terhadap PostgreSQL 18.
 - [x] Menghapus anggota project / keluar workspace melepas assignee task-nya (atomik, tercatat di riwayat).
-- [ ] Transfer kepemilikan project (agar Owner project dapat keluar dari workspace).
+- [x] Ubah peran anggota project dan transfer kepemilikan project (pengelola; atomik; aman terhadap balapan dengan keluar workspace).
 - [x] Pagination untuk daftar project dan anggota project; riwayat aktivitas task juga dipaginasi.
 - [x] Project `archived` menjadi read-only untuk task (409); `completed` tetap dapat diubah.
 
@@ -126,4 +126,4 @@
 
 ## Current Recommended Next Step
 
-Fitur backend MVP (PRD) lengkap dan temuan security review Sedang sudah diperbaiki. Ganti `JWT_SECRET` lokal (minimal 32 byte), jalankan seluruh integration test terhadap PostgreSQL 18, lalu: git + CI, CORS/security headers, transfer kepemilikan, dan konfigurasi deployment.
+Fitur backend MVP (PRD) lengkap dan temuan security review Sedang sudah diperbaiki. Ganti `JWT_SECRET` lokal (minimal 32 byte), jalankan seluruh integration test terhadap PostgreSQL 18, lalu: undangan untuk email belum terdaftar, dan konfigurasi deployment (hosting, secret manager, backup).

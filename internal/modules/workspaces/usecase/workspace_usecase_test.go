@@ -19,7 +19,9 @@ type fakeRepo struct {
 	workspaces map[uuid.UUID]*domain.Workspace
 	members    map[uuid.UUID]map[uuid.UUID]domain.Role // workspaceID -> userID -> role
 
-	createErr, listErr, findErr, roleErr error
+	createErr, listErr, findErr, roleErr, deleteErr error
+	deleteCalls                                     int
+	lastDeleted                                     struct{ wid, actor uuid.UUID }
 
 	createCalls, listCalls, findCalls, roleCalls int
 	lastCreated                                  *domain.Workspace
@@ -89,6 +91,20 @@ func (r *fakeRepo) FindMemberRole(_ context.Context, wid, uid uuid.UUID) (domain
 		return role, nil
 	}
 	return "", domain.ErrNotMember
+}
+
+func (r *fakeRepo) Delete(_ context.Context, wid, actor uuid.UUID) error {
+	r.deleteCalls++
+	r.lastDeleted.wid, r.lastDeleted.actor = wid, actor
+	if r.deleteErr != nil {
+		return r.deleteErr
+	}
+	if r.members[wid][actor] != domain.RoleOwner {
+		return domain.ErrForbidden
+	}
+	delete(r.workspaces, wid)
+	delete(r.members, wid)
+	return nil
 }
 
 func newUC(r *fakeRepo) *usecase.WorkspaceUseCase { return usecase.NewWorkspaceUseCase(r, nil) }

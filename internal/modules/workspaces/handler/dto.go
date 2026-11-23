@@ -15,6 +15,11 @@ type createWorkspaceRequest struct {
 	Description *string `json:"description"`
 }
 
+// deleteWorkspaceRequest: konfirmasi dengan mengetik ulang nama workspace persis.
+type deleteWorkspaceRequest struct {
+	ConfirmName string `json:"confirm_name" binding:"required"`
+}
+
 type workspaceResponse struct {
 	ID          string    `json:"internal_id"`
 	Name        string    `json:"name"`

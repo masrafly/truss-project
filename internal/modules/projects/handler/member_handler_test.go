@@ -21,9 +21,11 @@ import (
 )
 
 type fakeMemberUC struct {
-	addFn    func() (*domain.Member, error)
-	listFn   func() ([]domain.Member, error)
-	removeFn func() error
+	addFn      func() (*domain.Member, error)
+	listFn     func() ([]domain.Member, error)
+	removeFn   func() error
+	changeFn   func() (*domain.Member, error)
+	transferFn func() error
 
 	calls                                              int
 	gotPage, gotLimit                                  int
@@ -57,6 +59,18 @@ func (f *fakeMemberUC) Remove(_ context.Context, actor, pid, target string) erro
 	return f.removeFn()
 }
 
+func (f *fakeMemberUC) ChangeRole(_ context.Context, actor, pid, target, role string) (*domain.Member, error) {
+	f.calls++
+	f.gotActor, f.gotProject, f.gotTarget, f.gotRole = actor, pid, target, role
+	return f.changeFn()
+}
+
+func (f *fakeMemberUC) TransferOwnership(_ context.Context, actor, pid, target string) error {
+	f.calls++
+	f.gotActor, f.gotProject, f.gotTarget = actor, pid, target
+	return f.transferFn()
+}
+
 var memberUserID = uuid.MustParse("99999999-8888-7777-6666-555555555555")
 
 func sampleMember(role domain.ProjectRole) *domain.Member {
@@ -82,6 +96,7 @@ func TestMemberRoutesRegistered(t *testing.T) {
 	}
 	want := []string{
 		"POST /projects/:id/members", "GET /projects/:id/members", "DELETE /projects/:id/members/:userId",
+		"PATCH /projects/:id/members/:userId", "POST /projects/:id/transfer-ownership",
 	}
 	for _, w := range want {
 		if !got[w] {
@@ -99,8 +114,8 @@ func TestMemberAndProjectRoutesCoexist(t *testing.T) {
 	mw := middleware.AuthMiddleware(fakeValidator{})
 	handler.NewProjectHandler(&fakeUC{}, nil).RegisterRoutes(r, mw)
 	handler.NewMemberHandler(&fakeMemberUC{}, nil).RegisterRoutes(r, mw)
-	if n := len(r.Routes()); n != 9 {
-		t.Errorf("harapannya 9 route, dapat %d", n)
+	if n := len(r.Routes()); n != 11 {
+		t.Errorf("harapannya 11 route, dapat %d", n)
 	}
 }
 

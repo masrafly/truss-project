@@ -30,6 +30,10 @@ type fakeUC struct {
 	createFn func(ctx context.Context, userID, name string, desc *string) (*domain.WorkspaceAccess, error)
 	listFn   func(ctx context.Context, userID string) ([]domain.WorkspaceAccess, error)
 	getFn    func(ctx context.Context, userID, wsID string) (*domain.WorkspaceAccess, error)
+	deleteFn func(ctx context.Context, userID, wsID, confirm string) error
+
+	deleteCalls int
+	gotConfirm  string
 
 	createCalls, listCalls, getCalls int
 	gotUserID, gotName, gotWSID      string
@@ -62,6 +66,12 @@ func (f *fakeUC) Get(ctx context.Context, userID, wsID string) (*domain.Workspac
 	f.getCalls++
 	f.gotUserID, f.gotWSID = userID, wsID
 	return f.getFn(ctx, userID, wsID)
+}
+
+func (f *fakeUC) Delete(ctx context.Context, userID, wsID, confirm string) error {
+	f.deleteCalls++
+	f.gotUserID, f.gotWSID, f.gotConfirm = userID, wsID, confirm
+	return f.deleteFn(ctx, userID, wsID, confirm)
 }
 
 type fakeValidator struct{}
@@ -130,13 +140,13 @@ func TestRoutesRegistered(t *testing.T) {
 	for _, ri := range newRouter(&fakeUC{}, nil).Routes() {
 		got[ri.Method+" "+ri.Path] = true
 	}
-	for _, want := range []string{"POST /workspaces", "GET /workspaces", "GET /workspaces/:id"} {
+	for _, want := range []string{"POST /workspaces", "GET /workspaces", "GET /workspaces/:id", "DELETE /workspaces/:id"} {
 		if !got[want] {
 			t.Errorf("route %q harus terdaftar; ada: %v", want, got)
 		}
 	}
-	if len(got) != 3 {
-		t.Errorf("harapannya tepat 3 route, dapat %v", got)
+	if len(got) != 4 {
+		t.Errorf("harapannya tepat 4 route, dapat %v", got)
 	}
 }
 

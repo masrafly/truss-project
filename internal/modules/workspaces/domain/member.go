@@ -39,7 +39,22 @@ var (
 	// ErrMemberOwnsProjects: anggota masih menjadi Owner project di workspace ini.
 	// Ia tidak boleh keluar/dihapus agar project tidak kehilangan pengelola (PRD FR-04 #4).
 	ErrMemberOwnsProjects = errors.New("anggota masih menjadi owner project di workspace ini")
+
+	// ErrCannotChangeOwnerRole: peran Owner tidak diubah lewat ubah peran. Satu-satunya jalan
+	// adalah transfer kepemilikan, agar workspace selalu memiliki tepat satu Owner.
+	ErrCannotChangeOwnerRole = errors.New("peran owner tidak dapat diubah; gunakan transfer kepemilikan")
 )
+
+// CanChangeRole: hanya Owner yang boleh mengubah peran anggota (admin <-> member).
+// Admin tidak dapat mengubah peran siapa pun.
+func CanChangeRole(actor Role) bool { return actor == RoleOwner }
+
+// CanTransferOwnership: hanya Owner yang boleh memindahkan kepemilikan workspace.
+func CanTransferOwnership(actor Role) bool { return actor == RoleOwner }
+
+// CanDeleteWorkspace: hanya Owner. Penghapusan permanen dan ikut menghapus semua project,
+// task, komentar, dan riwayat di dalamnya.
+func CanDeleteWorkspace(actor Role) bool { return actor == RoleOwner }
 
 // ParseAssignableRole memvalidasi role yang boleh diberikan saat menambah anggota.
 // Role "owner" tidak dapat diberikan lewat penambahan anggota.

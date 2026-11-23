@@ -154,6 +154,32 @@ func (r *WorkspaceGormRepository) FindByID(ctx context.Context, id uuid.UUID) (*
 	return rec.toDomain(), nil
 }
 
+func (r *WorkspaceGormRepository) Delete(ctx context.Context, workspaceID, actorID uuid.UUID) error {
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		roles, err := lockMemberRoles(tx, workspaceID, actorID)
+		if err != nil {
+			return err
+		}
+		role, ok := roles[actorID]
+		if !ok {
+			return domain.ErrWorkspaceNotFound
+		}
+		if !domain.CanDeleteWorkspace(role) {
+			return domain.ErrForbidden
+		}
+		// Anggota, project, anggota project, task, komentar, dan riwayat ikut terhapus lewat
+		// ON DELETE CASCADE.
+		res := tx.Exec("DELETE FROM workspaces WHERE internal_id = ?", workspaceID)
+		if res.Error != nil {
+			return res.Error
+		}
+		if res.RowsAffected == 0 {
+			return domain.ErrWorkspaceNotFound
+		}
+		return nil
+	})
+}
+
 func (r *WorkspaceGormRepository) FindMemberRole(
 	ctx context.Context,
 	workspaceID, userID uuid.UUID,

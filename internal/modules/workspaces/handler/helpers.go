@@ -38,6 +38,7 @@ func writeError(c *gin.Context, log *slog.Logger, err error) {
 		c.JSON(http.StatusNotFound, gin.H{"message": err.Error()})
 	case errors.Is(err, domain.ErrAlreadyMember),
 		errors.Is(err, domain.ErrCannotRemoveOwner),
+		errors.Is(err, domain.ErrCannotChangeOwnerRole),
 		errors.Is(err, domain.ErrMemberOwnsProjects):
 		c.JSON(http.StatusConflict, gin.H{"message": err.Error()})
 	default:

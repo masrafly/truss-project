@@ -11,6 +11,16 @@ type addMemberRequest struct {
 	Role  string `json:"role"` // opsional: admin | member (default member)
 }
 
+// changeRoleRequest: role baru, "admin" atau "member".
+type changeRoleRequest struct {
+	Role string `json:"role" binding:"required"`
+}
+
+// transferOwnershipRequest: ID user anggota project yang menjadi Owner baru.
+type transferOwnershipRequest struct {
+	UserID string `json:"user_id" binding:"required"`
+}
+
 type memberResponse struct {
 	UserID   string    `json:"user_id"`
 	Name     string    `json:"name"`

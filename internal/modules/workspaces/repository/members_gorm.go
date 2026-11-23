@@ -85,6 +85,110 @@ func (r *WorkspaceGormRepository) ListMembers(
 	return out, total, nil
 }
 
+// lockMemberRoles mengunci baris keanggotaan yang disebut (urut user_id: urutan seragam
+// mencegah deadlock antar transaksi yang mengunci pasangan baris yang sama) dan mengembalikan
+// peran masing-masing. User yang bukan anggota tidak ada di hasil.
+func lockMemberRoles(tx *gorm.DB, workspaceID uuid.UUID, ids ...uuid.UUID) (map[uuid.UUID]domain.Role, error) {
+	type row struct {
+		UserID uuid.UUID `gorm:"column:user_id"`
+		Role   string    `gorm:"column:role"`
+	}
+	var rows []row
+	err := tx.Raw(
+		`SELECT user_id, role FROM workspace_members
+		  WHERE workspace_id = ? AND user_id IN ?
+		  ORDER BY user_id
+		  FOR UPDATE`,
+		workspaceID, ids,
+	).Scan(&rows).Error
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[uuid.UUID]domain.Role, len(rows))
+	for _, r := range rows {
+		out[r.UserID] = domain.Role(r.Role)
+	}
+	return out, nil
+}
+
+func (r *WorkspaceGormRepository) ChangeMemberRole(
+	ctx context.Context,
+	workspaceID, actorID, targetID uuid.UUID,
+	role domain.Role,
+) (*domain.Member, error) {
+	var out *domain.Member
+	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		roles, err := lockMemberRoles(tx, workspaceID, actorID, targetID)
+		if err != nil {
+			return err
+		}
+		if !domain.CanChangeRole(roles[actorID]) {
+			return domain.ErrForbidden
+		}
+		targetRole, ok := roles[targetID]
+		if !ok {
+			return domain.ErrMemberNotFound
+		}
+		if targetRole == domain.RoleOwner {
+			return domain.ErrCannotChangeOwnerRole
+		}
+
+		if err := tx.Exec(
+			"UPDATE workspace_members SET role = ? WHERE workspace_id = ? AND user_id = ?",
+			string(role), workspaceID, targetID,
+		).Error; err != nil {
+			return err
+		}
+
+		var rows []memberRow
+		if err := tx.Raw(
+			`SELECT wm.user_id, u.name, u.email, wm.role, wm.joined_at
+			   FROM workspace_members AS wm
+			   JOIN users AS u ON u.internal_id = wm.user_id AND u.deleted_at IS NULL
+			  WHERE wm.workspace_id = ? AND wm.user_id = ?`,
+			workspaceID, targetID,
+		).Scan(&rows).Error; err != nil {
+			return err
+		}
+		if len(rows) == 0 { // akun target sudah dihapus (soft delete): tidak tampil di daftar anggota; batalkan
+			return domain.ErrMemberNotFound
+		}
+		m := rows[0]
+		out = &domain.Member{UserID: m.UserID, Name: m.Name, Email: m.Email, Role: domain.Role(m.Role), JoinedAt: m.JoinedAt}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (r *WorkspaceGormRepository) TransferOwnership(
+	ctx context.Context,
+	workspaceID, actorID, targetID uuid.UUID,
+) error {
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		roles, err := lockMemberRoles(tx, workspaceID, actorID, targetID)
+		if err != nil {
+			return err
+		}
+		if !domain.CanTransferOwnership(roles[actorID]) {
+			return domain.ErrForbidden
+		}
+		if _, ok := roles[targetID]; !ok || actorID == targetID {
+			return domain.ErrMemberNotFound
+		}
+
+		// Satu pernyataan: tidak pernah ada keadaan antara tanpa Owner atau dengan dua Owner.
+		return tx.Exec(
+			`UPDATE workspace_members
+			    SET role = CASE WHEN user_id = ? THEN 'owner' ELSE 'admin' END
+			  WHERE workspace_id = ? AND user_id IN (?, ?)`,
+			targetID, workspaceID, actorID, targetID,
+		).Error
+	})
+}
+
 // RemoveMember menghapus keanggotaan workspace beserta seluruh keanggotaan project
 // user tersebut di workspace ini, dan melepasnya dari task yang ditugaskan kepadanya
 // (tercatat sebagai aktivitas oleh actorID), dalam SATU transaksi.

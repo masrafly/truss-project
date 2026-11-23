@@ -122,6 +122,10 @@ Sudah diterapkan:
 - Tidak memakai `Access-Control-Allow-Credentials`: autentikasi lewat header `Authorization`, bukan cookie. Bila suatu saat memakai cookie, desain ini harus ditinjau ulang (termasuk perlindungan CSRF).
 - Perlu diingat: CORS melindungi pengguna browser, bukan API dari klien non-browser; otorisasi tetap dari token dan database.
 
+### 6.0.1 Operasi khusus Owner dan konkurensi
+
+Ubah peran, transfer kepemilikan, dan hapus workspace bersifat khusus Owner. Selain diperiksa di use case, repository **mengunci baris keanggotaan** yang terlibat (`FOR UPDATE`, urut `user_id` agar tidak deadlock) dan memeriksa ulang peran pemanggil pada baris terkunci. Dengan begitu Owner yang baru saja diturunkan (atau sudah memindahkan kepemilikan) di permintaan lain tidak dapat menyelesaikan operasi dari pemeriksaan yang basi. Pemindahan kepemilikan project mengunci keanggotaan workspace target `FOR SHARE`, urutan yang sama dengan proses keluar workspace, sehingga project tidak pernah kehilangan Owner. Semua jalur ini diuji dengan koneksi database paralel sungguhan (`pgtest.Concurrent`) dan pemeriksaan mutasi.
+
 ### 6.1 Rate limiting
 
 | Lapis | Kunci | Batas | Respons |

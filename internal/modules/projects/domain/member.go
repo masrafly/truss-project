@@ -36,6 +36,10 @@ var (
 	// ErrCannotRemoveOwner: Owner project tidak dapat dihapus/keluar agar project
 	// selalu memiliki pengelola (PRD FR-04 #4).
 	ErrCannotRemoveOwner = errors.New("owner project tidak dapat dihapus")
+
+	// ErrCannotChangeOwnerRole: peran Owner project tidak diubah lewat ubah peran; gunakan
+	// transfer kepemilikan agar project selalu memiliki tepat satu Owner.
+	ErrCannotChangeOwnerRole = errors.New("peran owner project tidak dapat diubah; gunakan transfer kepemilikan")
 )
 
 // ParseAssignableRole: hanya admin/member yang boleh diberikan lewat penambahan anggota.
@@ -64,6 +68,11 @@ func (a Access) memberManageLevel() int {
 	}
 	return 0
 }
+
+// CanManageRoles: ubah peran anggota (admin <-> member) dan pindahkan kepemilikan hanya untuk
+// tingkat penuh (Owner project, atau Owner/Admin workspace). Admin project tidak dapat
+// mengubah peran siapa pun.
+func (a Access) CanManageRoles() bool { return a.memberManageLevel() == 2 }
 
 // CanAddMember: tingkat penuh boleh menambah admin/member; Admin project hanya member.
 func (a Access) CanAddMember(newRole ProjectRole) bool {

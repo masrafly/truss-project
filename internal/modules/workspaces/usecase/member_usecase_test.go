@@ -20,6 +20,14 @@ type fakeMemberRepo struct {
 	names map[uuid.UUID]domain.UserRef
 
 	roleErr, addErr, listErr, removeErr error
+	changeErr, transferErr              error
+
+	changeCalls, transferCalls int
+	lastChange                 struct {
+		wid, actor, target uuid.UUID
+		role               domain.Role
+	}
+	lastTransfer struct{ wid, actor, target uuid.UUID }
 
 	addCalls, removeCalls, roleCalls, listCalls int
 	lastLimit, lastOffset                       int
@@ -619,4 +627,48 @@ func TestMemberList_PaginationDefaultsAndValidation(t *testing.T) {
 	if f.repo.listCalls != before {
 		t.Error("repository tidak boleh dipanggil untuk pagination tidak valid")
 	}
+}
+
+// ---------- fake: ubah peran & transfer kepemilikan ----------
+
+func (r *fakeMemberRepo) ChangeMemberRole(
+	_ context.Context,
+	wid, actor, target uuid.UUID,
+	role domain.Role,
+) (*domain.Member, error) {
+	r.changeCalls++
+	r.lastChange.wid, r.lastChange.actor, r.lastChange.target, r.lastChange.role = wid, actor, target, role
+	if r.changeErr != nil {
+		return nil, r.changeErr
+	}
+	if r.roles[wid][actor] != domain.RoleOwner {
+		return nil, domain.ErrForbidden
+	}
+	cur, ok := r.roles[wid][target]
+	if !ok {
+		return nil, domain.ErrMemberNotFound
+	}
+	if cur == domain.RoleOwner {
+		return nil, domain.ErrCannotChangeOwnerRole
+	}
+	r.roles[wid][target] = role
+	ref := r.names[target]
+	return &domain.Member{UserID: target, Name: ref.Name, Email: ref.Email, Role: role}, nil
+}
+
+func (r *fakeMemberRepo) TransferOwnership(_ context.Context, wid, actor, target uuid.UUID) error {
+	r.transferCalls++
+	r.lastTransfer.wid, r.lastTransfer.actor, r.lastTransfer.target = wid, actor, target
+	if r.transferErr != nil {
+		return r.transferErr
+	}
+	if r.roles[wid][actor] != domain.RoleOwner {
+		return domain.ErrForbidden
+	}
+	if _, ok := r.roles[wid][target]; !ok {
+		return domain.ErrMemberNotFound
+	}
+	r.roles[wid][target] = domain.RoleOwner
+	r.roles[wid][actor] = domain.RoleAdmin
+	return nil
 }

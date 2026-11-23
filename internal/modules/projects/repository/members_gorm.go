@@ -149,6 +149,119 @@ func (r *ProjectGormRepository) ListMembers(
 	return out, total, nil
 }
 
+func (r *ProjectGormRepository) ChangeMemberRole(
+	ctx context.Context,
+	projectID, userID uuid.UUID,
+	role domain.ProjectRole,
+) (*domain.Member, error) {
+	var out *domain.Member
+	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var current string
+		err := tx.Raw(
+			"SELECT role FROM project_members WHERE project_id = ? AND user_id = ? FOR UPDATE",
+			projectID, userID,
+		).Row().Scan(&current)
+		if err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return domain.ErrMemberNotFound
+			}
+			return err
+		}
+		if domain.ProjectRole(current) == domain.ProjectOwner {
+			return domain.ErrCannotChangeOwnerRole
+		}
+
+		if err := tx.Exec(
+			"UPDATE project_members SET role = ? WHERE project_id = ? AND user_id = ?",
+			string(role), projectID, userID,
+		).Error; err != nil {
+			return err
+		}
+
+		var rows []memberRow
+		if err := tx.Raw(
+			`SELECT pm.user_id, u.name, u.email, pm.role, pm.joined_at
+			   FROM project_members AS pm
+			   JOIN users AS u ON u.internal_id = pm.user_id AND u.deleted_at IS NULL
+			  WHERE pm.project_id = ? AND pm.user_id = ?`,
+			projectID, userID,
+		).Scan(&rows).Error; err != nil {
+			return err
+		}
+		if len(rows) == 0 { // akun target sudah dihapus (soft delete): tidak tampil di daftar anggota; batalkan
+			return domain.ErrMemberNotFound
+		}
+		m := rows[0]
+		out = &domain.Member{UserID: m.UserID, Name: m.Name, Email: m.Email, Role: domain.ProjectRole(m.Role), JoinedAt: m.JoinedAt}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (r *ProjectGormRepository) TransferOwnership(ctx context.Context, projectID, newOwnerID uuid.UUID) error {
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		// 1. Kunci keanggotaan workspace target (FOR SHARE), urutan yang sama dengan AddMember.
+		//    Proses keluar workspace mengunci baris ini FOR UPDATE lebih dulu lalu memeriksa
+		//    apakah ia Owner project: bila kita menang, ia menjadi Owner dan keluarnya ditolak
+		//    (409); bila ia menang, target sudah bukan anggota dan kita berhenti di sini.
+		var one int
+		err := tx.Raw(
+			`SELECT 1
+			   FROM workspace_members AS wm
+			   JOIN projects AS p ON p.workspace_id = wm.workspace_id
+			  WHERE p.internal_id = ? AND wm.user_id = ?
+			  FOR SHARE OF wm`,
+			projectID, newOwnerID,
+		).Row().Scan(&one)
+		if err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return domain.ErrMemberNotFound
+			}
+			return err
+		}
+
+		// 2. Kunci baris Owner saat ini dan target (urut user_id: urutan seragam anti-deadlock).
+		type row struct {
+			UserID uuid.UUID `gorm:"column:user_id"`
+			Role   string    `gorm:"column:role"`
+		}
+		var rows []row
+		if err := tx.Raw(
+			`SELECT user_id, role FROM project_members
+			  WHERE project_id = ? AND (role = 'owner' OR user_id = ?)
+			  ORDER BY user_id
+			  FOR UPDATE`,
+			projectID, newOwnerID,
+		).Scan(&rows).Error; err != nil {
+			return err
+		}
+		var targetRole string
+		found := false
+		for _, r := range rows {
+			if r.UserID == newOwnerID {
+				targetRole, found = r.Role, true
+			}
+		}
+		if !found {
+			return domain.ErrMemberNotFound
+		}
+		if domain.ProjectRole(targetRole) == domain.ProjectOwner {
+			return domain.ErrInvalidInput // sudah menjadi Owner
+		}
+
+		// 3. Satu pernyataan: tidak pernah ada keadaan antara tanpa Owner atau dengan dua Owner.
+		return tx.Exec(
+			`UPDATE project_members
+			    SET role = CASE WHEN user_id = ? THEN 'owner' ELSE 'admin' END
+			  WHERE project_id = ? AND (user_id = ? OR role = 'owner')`,
+			newOwnerID, projectID, newOwnerID,
+		).Error
+	})
+}
+
 // RemoveMember menghapus keanggotaan project dan, dalam transaksi yang sama, melepas
 // user dari semua task yang ditugaskan kepadanya di project ini (dicatat sebagai
 // aktivitas assignee_changed oleh actorID). Owner tidak pernah dihapus: filter

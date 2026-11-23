@@ -112,7 +112,7 @@ go test ./...
 | `middleware` | Unit | `AuthMiddleware`, `RequestID`, `RequestLogger`, `Recovery` (via `httptest`) |
 | `modules/auth/handler` | Unit | Fake use case + `httptest`: status, DTO, pemetaan error, tidak ada kebocoran data |
 | `modules/workspaces/usecase`, `handler` | Unit | Fake port; otorisasi keanggotaan, kebijakan 404, DTO, pemetaan error |
-| `modules/workspaces/repository` | Integration | Menjalankan **semua** migration di schema sementara (`internal/testutil/pgtest`); di-skip tanpa `TEST_DB_HOST` |
+| `modules/workspaces/repository` | Integration | Menjalankan **semua** migration di schema sementara (`internal/testutil/pgtest`); di-skip tanpa `TEST_DB_HOST`. Test kunci/balapan memakai `pgtest.Concurrent` |
 | `modules/auth/repository` | Integration | PostgreSQL asli; **di-skip** bila `TEST_DB_HOST` kosong |
 
 ### Integration test repository
@@ -164,6 +164,10 @@ docs: update architecture documentation
 - [ ] Migration ditinjau.
 - [ ] API docs diperbarui.
 - [ ] Authorization diperiksa untuk resource yang dilindungi.
+
+## Menulis test konkurensi (integration)
+
+`pgtest.Setup` sengaja memakai **satu** koneksi database (agar `SET search_path` berlaku), sehingga dua goroutine yang memakai koneksi itu hanya **bergantian** dan tidak pernah menguji kunci baris sungguhan: test "balapan" di atasnya lulus walau kuncinya dihapus. Untuk test yang menguji kunci atau transaksi serentak, buat koneksi paralel dengan `cdb := pgtest.Concurrent(t, db, 8)` (semua koneksinya memakai schema test yang sama) dan bangun repository di atasnya. Pola yang andal adalah urutan **deterministik**: satu transaksi test menahan kunci baris, operasi yang diuji dijalankan di goroutine dan harus **menunggu** (tidak selesai dalam ~300 ms), lalu transaksi test di-commit dan hasil akhirnya diperiksa. Selalu pastikan test benar-benar gagal bila kunci dihapus (uji mutasi).
 
 ## Membuat JWT_SECRET
 

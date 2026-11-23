@@ -150,6 +150,9 @@ Secara default aplikasi menggunakan port `8080`, kecuali `APP_PORT` diatur di `.
 | POST | `/workspaces/:id/members` | Implemented; JWT; Owner/Admin menambah anggota via email |
 | GET | `/workspaces/:id/members` | Implemented; JWT; semua anggota |
 | DELETE | `/workspaces/:id/members/:userId` | Implemented; JWT; hapus anggota atau keluar |
+| PATCH | `/workspaces/:id/members/:userId` | Implemented; JWT; hanya Owner; ubah peran admin <-> member |
+| POST | `/workspaces/:id/transfer-ownership` | Implemented; JWT; hanya Owner; target jadi Owner, Owner lama jadi Admin (atomik) |
+| DELETE | `/workspaces/:id` | Implemented; JWT; hanya Owner; wajib `confirm_name`; hapus permanen seluruh isi |
 | POST | `/workspaces/:id/projects` | Implemented; JWT; Owner/Admin workspace; pembuat menjadi Owner project |
 | GET | `/workspaces/:id/projects` | Implemented; JWT; project yang boleh dilihat di workspace |
 | GET | `/projects` | Implemented; JWT; project yang boleh dilihat di semua workspace |
@@ -159,6 +162,8 @@ Secara default aplikasi menggunakan port `8080`, kecuali `APP_PORT` diatur di `.
 | POST | `/projects/:id/members` | Implemented; JWT; tambah anggota workspace ke project |
 | GET | `/projects/:id/members` | Implemented; JWT; semua yang bisa melihat project |
 | DELETE | `/projects/:id/members/:userId` | Implemented; JWT; hapus anggota atau keluar |
+| PATCH | `/projects/:id/members/:userId` | Implemented; JWT; pengelola; ubah peran admin <-> member |
+| POST | `/projects/:id/transfer-ownership` | Implemented; JWT; pengelola; target jadi Owner project, Owner lama jadi Admin (atomik) |
 | POST | `/projects/:id/tasks` | Implemented; JWT; semua yang bisa melihat project |
 | GET | `/projects/:id/tasks` | Implemented; JWT; filter status/prioritas/assignee, cari, pagination |
 | GET | `/tasks/:id` | Implemented; JWT |

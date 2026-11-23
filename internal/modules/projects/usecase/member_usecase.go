@@ -101,6 +101,68 @@ func (u *MemberUseCase) List(
 	return pagination.NewResult(list, total, pg), nil
 }
 
+// ChangeRole mengubah peran anggota project (admin <-> member). Hanya tingkat penuh: Owner
+// project atau Owner/Admin workspace. Urutan: dapat melihat project (404) -> validasi role
+// (400) -> izin (403) -> target anggota (404) -> target bukan Owner (409).
+func (u *MemberUseCase) ChangeRole(
+	ctx context.Context,
+	actorID, projectID, targetUserID, role string,
+) (*domain.Member, error) {
+	actor, p, err := loadViewable(ctx, u.repo, u.log, actorID, projectID)
+	if err != nil {
+		return nil, err
+	}
+	newRole, ok := domain.ParseAssignableRole(role)
+	if !ok {
+		return nil, domain.ErrInvalidInput
+	}
+	if !p.CanManageRoles() {
+		u.log.WarnContext(ctx, "ubah peran anggota project ditolak: peran tidak cukup",
+			"project_id", p.ID, "actor_id", actor,
+			"workspace_role", p.WorkspaceRole, "project_role", p.ProjectRole)
+		return nil, domain.ErrForbidden
+	}
+	target, err := uuid.Parse(targetUserID)
+	if err != nil {
+		return nil, domain.ErrMemberNotFound
+	}
+
+	m, err := u.repo.ChangeMemberRole(ctx, p.ID, target, newRole)
+	if err != nil {
+		return nil, err
+	}
+	u.log.InfoContext(ctx, "peran anggota project diubah",
+		"project_id", p.ID, "actor_id", actor, "member_id", target, "role", newRole)
+	return m, nil
+}
+
+// TransferOwnership memindahkan kepemilikan project ke anggota project lain; Owner lama
+// menjadi Admin. Hanya tingkat penuh. Urutan: dapat melihat (404) -> izin (403) -> target
+// anggota (404) -> target bukan Owner saat ini (400).
+func (u *MemberUseCase) TransferOwnership(ctx context.Context, actorID, projectID, targetUserID string) error {
+	actor, p, err := loadViewable(ctx, u.repo, u.log, actorID, projectID)
+	if err != nil {
+		return err
+	}
+	if !p.CanManageRoles() {
+		u.log.WarnContext(ctx, "transfer kepemilikan project ditolak: peran tidak cukup",
+			"project_id", p.ID, "actor_id", actor,
+			"workspace_role", p.WorkspaceRole, "project_role", p.ProjectRole)
+		return domain.ErrForbidden
+	}
+	target, err := uuid.Parse(targetUserID)
+	if err != nil {
+		return domain.ErrMemberNotFound
+	}
+
+	if err := u.repo.TransferOwnership(ctx, p.ID, target); err != nil {
+		return err
+	}
+	u.log.InfoContext(ctx, "kepemilikan project dipindahkan",
+		"project_id", p.ID, "actor_id", actor, "to_user_id", target)
+	return nil
+}
+
 // Remove menghapus anggota project, atau keluar bila target adalah pemanggil sendiri.
 func (u *MemberUseCase) Remove(ctx context.Context, actorID, projectID, targetUserID string) error {
 	actor, p, err := loadViewable(ctx, u.repo, u.log, actorID, projectID)

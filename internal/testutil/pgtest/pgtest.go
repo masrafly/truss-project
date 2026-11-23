@@ -20,6 +20,8 @@ import (
 	"encoding/hex"
 	"fmt"
 	"log/slog"
+	"net"
+	"net/url"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -27,7 +29,11 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/stdlib"
+	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
+	"gorm.io/gorm/logger"
 
 	"truss-project/internal/config"
 	"truss-project/internal/platform/database"
@@ -150,4 +156,47 @@ func Exec(t *testing.T, db *gorm.DB, sql string, args ...any) {
 	if err := db.Exec(sql, args...).Error; err != nil {
 		t.Fatalf("exec gagal: %v\nSQL: %s", err, sql)
 	}
+}
+
+// Concurrent mengembalikan koneksi GORM KEDUA ke schema sementara milik db, dengan hingga
+// maxConns koneksi paralel yang SEMUANYA memakai schema itu (search_path dikirim sebagai
+// parameter startup, bukan SET per koneksi).
+//
+// Setup sengaja memakai satu koneksi, sehingga dua goroutine yang memakai db akan
+// BERGANTIAN dan tidak pernah menguji kunci baris/transaksi yang sebenarnya. Test
+// konkurensi (balapan, menunggu kunci) wajib memakai koneksi dari Concurrent. Data yang
+// ditulis lewat db terlihat di sini setelah ter-commit (db memakai autocommit).
+func Concurrent(t *testing.T, db *gorm.DB, maxConns int) *gorm.DB {
+	t.Helper()
+
+	var schema string
+	if err := db.Raw("SELECT current_schema()").Row().Scan(&schema); err != nil {
+		t.Fatalf("gagal membaca schema test: %v", err)
+	}
+
+	dsn := (&url.URL{
+		Scheme:   "postgres",
+		User:     url.UserPassword(envOr("TEST_DB_USER", "postgres"), os.Getenv("TEST_DB_PASSWORD")),
+		Host:     net.JoinHostPort(os.Getenv("TEST_DB_HOST"), envOr("TEST_DB_PORT", "5432")),
+		Path:     "/" + envOr("TEST_DB_NAME", "postgres"),
+		RawQuery: "sslmode=" + url.QueryEscape(envOr("TEST_DB_SSLMODE", "disable")),
+	}).String()
+	pgCfg, err := pgx.ParseConfig(dsn)
+	if err != nil {
+		t.Fatalf("DSN test tidak valid: %v", err)
+	}
+	pgCfg.RuntimeParams["search_path"] = schema
+
+	sqlDB := stdlib.OpenDB(*pgCfg)
+	sqlDB.SetMaxOpenConns(maxConns)
+	t.Cleanup(func() { _ = sqlDB.Close() })
+
+	cdb, err := gorm.Open(postgres.New(postgres.Config{Conn: sqlDB}), &gorm.Config{
+		TranslateError: true,
+		Logger:         logger.Discard,
+	})
+	if err != nil {
+		t.Fatalf("gagal membuka koneksi serentak: %v", err)
+	}
+	return cdb
 }

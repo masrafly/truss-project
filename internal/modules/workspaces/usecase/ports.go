@@ -25,4 +25,10 @@ type WorkspaceRepository interface {
 	FindByID(ctx context.Context, id uuid.UUID) (*domain.Workspace, error)
 
 	FindMemberRole(ctx context.Context, workspaceID, userID uuid.UUID) (domain.Role, error)
+
+	// Delete menghapus workspace beserta seluruh isinya (project, anggota, task, komentar,
+	// riwayat; cascade di database). Actor diperiksa ulang sebagai Owner pada baris
+	// keanggotaan yang terkunci: domain.ErrWorkspaceNotFound bila bukan anggota,
+	// domain.ErrForbidden bila bukan Owner.
+	Delete(ctx context.Context, workspaceID, actorID uuid.UUID) error
 }

@@ -29,6 +29,18 @@ type MemberRepository interface {
 	// atomik. Mengembalikan domain.ErrMemberOwnsProjects (tanpa menghapus apa pun) bila
 	// user masih Owner suatu project di workspace ini.
 	RemoveMember(ctx context.Context, workspaceID, userID, actorID uuid.UUID) error
+
+	// ChangeMemberRole mengubah peran target menjadi admin/member dan mengembalikan anggota
+	// terbaru. Dalam satu transaksi, baris actor dan target dikunci (urut user_id, agar tidak
+	// deadlock dengan TransferOwnership) dan keduanya diperiksa ulang pada baris yang terkunci:
+	// actor harus masih Owner (domain.ErrForbidden), target harus anggota
+	// (domain.ErrMemberNotFound) dan bukan Owner (domain.ErrCannotChangeOwnerRole).
+	ChangeMemberRole(ctx context.Context, workspaceID, actorID, targetID uuid.UUID, role domain.Role) (*domain.Member, error)
+
+	// TransferOwnership, atomik: target menjadi Owner dan actor menjadi Admin. Actor diperiksa
+	// ulang pada baris terkunci (domain.ErrForbidden bila sudah bukan Owner); target harus
+	// anggota (domain.ErrMemberNotFound).
+	TransferOwnership(ctx context.Context, workspaceID, actorID, targetID uuid.UUID) error
 }
 
 // UserDirectory mencari user terdaftar. Ini adalah port ke modul lain (users/auth);

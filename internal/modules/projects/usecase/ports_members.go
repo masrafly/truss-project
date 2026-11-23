@@ -40,4 +40,15 @@ type MemberRepository interface {
 	// ditugaskan kepada user dilepas (assignee = null) dan dicatat atas nama actorID,
 	// dalam transaksi yang sama.
 	RemoveMember(ctx context.Context, projectID, userID, actorID uuid.UUID) error
+
+	// ChangeMemberRole mengubah peran target menjadi admin/member dan mengembalikan anggota
+	// terbaru. Baris target dikunci (FOR UPDATE): domain.ErrMemberNotFound bila bukan anggota
+	// (atau akunnya sudah dihapus), domain.ErrCannotChangeOwnerRole bila target Owner.
+	ChangeMemberRole(ctx context.Context, projectID, userID uuid.UUID, role domain.ProjectRole) (*domain.Member, error)
+
+	// TransferOwnership, atomik: target menjadi Owner dan Owner saat ini menjadi Admin. Target
+	// harus anggota project DAN masih anggota workspace (domain.ErrMemberNotFound); keanggotaan
+	// workspace-nya dikunci FOR SHARE agar tidak bertabrakan dengan proses keluar workspace.
+	// Target yang sudah Owner menghasilkan domain.ErrInvalidInput.
+	TransferOwnership(ctx context.Context, projectID, newOwnerID uuid.UUID) error
 }

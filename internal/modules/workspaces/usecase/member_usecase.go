@@ -135,6 +135,69 @@ func (u *MemberUseCase) List(
 	return pagination.NewResult(list, total, p), nil
 }
 
+// ChangeRole mengubah peran anggota (admin <-> member). Hanya Owner.
+// Urutan pemeriksaan: keanggotaan pemanggil (404) -> validasi role (400) -> izin (403) ->
+// target anggota (404) -> target bukan Owner (409).
+func (u *MemberUseCase) ChangeRole(
+	ctx context.Context,
+	actorID, workspaceID, targetUserID, role string,
+) (*domain.Member, error) {
+	actor, wid, actorRole, err := u.callerRole(ctx, actorID, workspaceID)
+	if err != nil {
+		return nil, err
+	}
+	newRole, ok := domain.ParseAssignableRole(role)
+	if !ok {
+		return nil, domain.ErrInvalidInput
+	}
+	if !domain.CanChangeRole(actorRole) {
+		u.log.WarnContext(ctx, "ubah peran ditolak: bukan owner",
+			"workspace_id", wid, "actor_id", actor, "actor_role", actorRole)
+		return nil, domain.ErrForbidden
+	}
+	target, err := uuid.Parse(targetUserID)
+	if err != nil {
+		return nil, domain.ErrMemberNotFound
+	}
+
+	m, err := u.members.ChangeMemberRole(ctx, wid, actor, target, newRole)
+	if err != nil {
+		return nil, err // ErrForbidden, ErrMemberNotFound, ErrCannotChangeOwnerRole
+	}
+	u.log.InfoContext(ctx, "peran anggota diubah",
+		"workspace_id", wid, "actor_id", actor, "member_id", target, "role", newRole)
+	return m, nil
+}
+
+// TransferOwnership memindahkan kepemilikan ke anggota lain; Owner lama menjadi Admin.
+// Urutan pemeriksaan: keanggotaan pemanggil (404) -> izin (403) -> target valid dan bukan
+// diri sendiri (400/404) -> target anggota (404).
+func (u *MemberUseCase) TransferOwnership(ctx context.Context, actorID, workspaceID, targetUserID string) error {
+	actor, wid, actorRole, err := u.callerRole(ctx, actorID, workspaceID)
+	if err != nil {
+		return err
+	}
+	if !domain.CanTransferOwnership(actorRole) {
+		u.log.WarnContext(ctx, "transfer kepemilikan ditolak: bukan owner",
+			"workspace_id", wid, "actor_id", actor, "actor_role", actorRole)
+		return domain.ErrForbidden
+	}
+	target, err := uuid.Parse(targetUserID)
+	if err != nil {
+		return domain.ErrMemberNotFound
+	}
+	if target == actor {
+		return domain.ErrInvalidInput
+	}
+
+	if err := u.members.TransferOwnership(ctx, wid, actor, target); err != nil {
+		return err // ErrForbidden, ErrMemberNotFound
+	}
+	u.log.InfoContext(ctx, "kepemilikan workspace dipindahkan",
+		"workspace_id", wid, "from_user_id", actor, "to_user_id", target)
+	return nil
+}
+
 // Remove menghapus anggota (atau keluar dari workspace jika target adalah pemanggil sendiri).
 func (u *MemberUseCase) Remove(ctx context.Context, actorID, workspaceID, targetUserID string) error {
 	actor, wid, actorRole, err := u.callerRole(ctx, actorID, workspaceID)

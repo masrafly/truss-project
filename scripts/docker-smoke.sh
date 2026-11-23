@@ -6,7 +6,7 @@
 #
 # Yang diperiksa: image tidak memuat .env/.git/docs/test; HEALTHCHECK menjadi healthy; /healthz dan
 # /readyz 200; production menolak DB tanpa TLS; header keamanan dan CORS; alur register -> login -> workspace -> project -> task berjalan; refresh token
-# (rotasi, pemakaian ulang ditolak, logout); ubah nama dan ganti password; image berjalan
+# (rotasi, pemakaian ulang ditolak, logout); ubah nama dan ganti password; ubah peran, transfer kepemilikan, hapus workspace; image berjalan
 # sebagai non-root; `docker stop` (SIGTERM) berhenti rapi dengan exit code 0.
 # Semua kredensial dibuat acak per-run dan dibuang bersama container.
 set -euo pipefail
@@ -178,6 +178,48 @@ SESSION="$(curl -s -X POST "$BASE/auth/login" -H "$JSON" -d '{"email":"smoke@exa
 [ "$(code -X POST "$BASE/auth/login" -H "$JSON" -d '{"email":"smoke@example.com","password":"password123"}')" = "401" ]   || fail "password lama harus ditolak setelah diganti"
 [ "$(code -X POST "$BASE/auth/login" -H "$JSON" -d '{"email":"smoke@example.com","password":"passwordBaru1"}')" = "200" ]   || fail "password baru harus bisa login"
 ok "ubah nama, ganti password (403 bila salah), sesi lama dicabut, password baru berlaku"
+
+# ---------- peran, transfer kepemilikan, dan hapus workspace ----------
+U2_JSON="$(curl -s -X POST "$BASE/auth/register" -H "$JSON" -d '{"name":"Smoke Dua","email":"smoke2@example.com","password":"password123"}')"
+U2="$(echo "$U2_JSON" | json_field internal_id)"
+[ -n "$U2" ] || fail "user kedua tidak terdaftar: $U2_JSON"
+TOKEN2="$(curl -s -X POST "$BASE/auth/login" -H "$JSON" -d '{"email":"smoke2@example.com","password":"password123"}' | json_field access_token)"
+AUTH2="Authorization: Bearer $TOKEN2"
+OWNER_TOKEN="$(curl -s -X POST "$BASE/auth/login" -H "$JSON" -d '{"email":"smoke@example.com","password":"passwordBaru1"}' | json_field access_token)"
+AUTH="Authorization: Bearer $OWNER_TOKEN"
+
+[ "$(code -X POST "$BASE/workspaces/$WS/members" -H "$JSON" -H "$AUTH" -d '{"email":"smoke2@example.com"}')" = "201" ] \
+  || fail "menambah anggota workspace bukan 201"
+[ "$(code -X PATCH "$BASE/workspaces/$WS/members/$U2" -H "$JSON" -H "$AUTH2" -d '{"role":"admin"}')" = "403" ] \
+  || fail "Member tidak boleh mengubah peran (harus 403)"
+[ "$(code -X PATCH "$BASE/workspaces/$WS/members/$U2" -H "$JSON" -H "$AUTH" -d '{"role":"admin"}')" = "200" ] \
+  || fail "Owner mengubah peran bukan 200"
+[ "$(code -X POST "$BASE/workspaces/$WS/transfer-ownership" -H "$JSON" -H "$AUTH" -d "{\"user_id\":\"$U2\"}")" = "200" ] \
+  || fail "transfer kepemilikan workspace bukan 200"
+[ "$(curl -s "$BASE/workspaces/$WS" -H "$AUTH2" | json_field role)" = "owner" ] || fail "penerima harus menjadi owner workspace"
+[ "$(curl -s "$BASE/workspaces/$WS" -H "$AUTH" | json_field role)" = "admin" ] || fail "Owner lama harus menjadi admin"
+[ "$(code -X POST "$BASE/workspaces/$WS/transfer-ownership" -H "$JSON" -H "$AUTH" -d "{\"user_id\":\"$U2\"}")" = "403" ] \
+  || fail "Owner lama tidak boleh memindahkan kepemilikan lagi (harus 403)"
+ok "workspace: ubah peran hanya Owner, transfer kepemilikan menukar Owner dan Admin"
+
+[ "$(code -X POST "$BASE/projects/$PR/members" -H "$JSON" -H "$AUTH2" -d '{"email":"smoke2@example.com","role":"member"}')" = "201" ] \
+  || fail "menambah anggota project bukan 201"
+[ "$(code -X POST "$BASE/projects/$PR/transfer-ownership" -H "$JSON" -H "$AUTH2" -d "{\"user_id\":\"$U2\"}")" = "200" ] \
+  || fail "transfer kepemilikan project bukan 200"
+[ "$(code -X PATCH "$BASE/projects/$PR/members/$U2" -H "$JSON" -H "$AUTH2" -d '{"role":"member"}')" = "409" ] \
+  || fail "mengubah peran Owner project harus 409"
+ok "project: transfer kepemilikan berhasil, peran Owner tidak dapat diubah (409)"
+
+[ "$(code -X DELETE "$BASE/workspaces/$WS" -H "$JSON" -H "$AUTH" -d '{"confirm_name":"WS Smoke"}')" = "403" ] \
+  || fail "bukan Owner tidak boleh menghapus workspace (harus 403)"
+[ "$(code -X DELETE "$BASE/workspaces/$WS" -H "$JSON" -H "$AUTH2" -d '{"confirm_name":"salah"}')" = "400" ] \
+  || fail "konfirmasi nama salah harus 400"
+[ "$(code "$BASE/workspaces/$WS" -H "$AUTH2")" = "200" ] || fail "workspace tidak boleh terhapus sebelum konfirmasi benar"
+[ "$(code -X DELETE "$BASE/workspaces/$WS" -H "$JSON" -H "$AUTH2" -d '{"confirm_name":"WS Smoke"}')" = "204" ] \
+  || fail "hapus workspace oleh Owner bukan 204"
+[ "$(code "$BASE/workspaces/$WS" -H "$AUTH2")" = "404" ] || fail "workspace harus 404 setelah dihapus"
+[ "$(code "$BASE/tasks/$TK" -H "$AUTH2")" = "404" ] || fail "task di dalam workspace harus ikut terhapus (404)"
+ok "hapus workspace: hanya Owner, wajib konfirmasi nama, seluruh isi ikut terhapus"
 
 # ---------- shutdown rapi ----------
 docker stop -t 10 "$API" >/dev/null

@@ -98,6 +98,48 @@ func (u *WorkspaceUseCase) List(
 	return pagination.NewResult(list, total, p), nil
 }
 
+// Delete menghapus workspace beserta seluruh isinya secara permanen. Hanya Owner, dan harus
+// mengetik ulang nama workspace persis (konfirmasi) agar tidak terhapus karena salah klik.
+// Urutan: keanggotaan (404) -> Owner (403) -> nama konfirmasi cocok (400).
+func (u *WorkspaceUseCase) Delete(ctx context.Context, userID, workspaceID, confirmName string) error {
+	uid, err := uuid.Parse(userID)
+	if err != nil {
+		return domain.ErrUnauthenticated
+	}
+	wid, err := uuid.Parse(workspaceID)
+	if err != nil {
+		return domain.ErrWorkspaceNotFound
+	}
+
+	role, err := u.repo.FindMemberRole(ctx, wid, uid)
+	if err != nil {
+		if errors.Is(err, domain.ErrNotMember) {
+			u.log.WarnContext(ctx, "akses workspace ditolak", "workspace_id", wid, "user_id", uid)
+			return domain.ErrWorkspaceNotFound
+		}
+		return err
+	}
+	if !domain.CanDeleteWorkspace(role) {
+		u.log.WarnContext(ctx, "penghapusan workspace ditolak: bukan owner",
+			"workspace_id", wid, "user_id", uid, "role", role)
+		return domain.ErrForbidden
+	}
+
+	w, err := u.repo.FindByID(ctx, wid)
+	if err != nil {
+		return err
+	}
+	if strings.TrimSpace(confirmName) != w.Name {
+		return domain.ErrInvalidInput
+	}
+
+	if err := u.repo.Delete(ctx, wid, uid); err != nil {
+		return err
+	}
+	u.log.InfoContext(ctx, "workspace dihapus", "workspace_id", wid, "user_id", uid)
+	return nil
+}
+
 // Get mengembalikan detail workspace untuk anggotanya. Non-anggota, workspace yang
 // tidak ada, dan ID yang bukan UUID semuanya menghasilkan ErrWorkspaceNotFound.
 func (u *WorkspaceUseCase) Get(

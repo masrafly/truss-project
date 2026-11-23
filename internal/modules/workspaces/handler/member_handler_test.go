@@ -25,9 +25,13 @@ import (
 // ---------- fake ----------
 
 type fakeMemberUC struct {
-	addFn    func(ctx context.Context, actorID, wsID, email, role string) (*domain.Member, error)
-	listFn   func(ctx context.Context, actorID, wsID string) ([]domain.Member, error)
-	removeFn func(ctx context.Context, actorID, wsID, targetID string) error
+	addFn      func(ctx context.Context, actorID, wsID, email, role string) (*domain.Member, error)
+	listFn     func(ctx context.Context, actorID, wsID string) ([]domain.Member, error)
+	removeFn   func(ctx context.Context, actorID, wsID, targetID string) error
+	changeFn   func(ctx context.Context, actorID, wsID, targetID, role string) (*domain.Member, error)
+	transferFn func(ctx context.Context, actorID, wsID, targetID string) error
+
+	changeCalls, transferCalls int
 
 	addCalls, listCalls, removeCalls int
 	gotActor, gotWS, gotEmail        string
@@ -62,6 +66,18 @@ func (f *fakeMemberUC) Remove(ctx context.Context, actorID, wsID, targetID strin
 	return f.removeFn(ctx, actorID, wsID, targetID)
 }
 
+func (f *fakeMemberUC) ChangeRole(ctx context.Context, actorID, wsID, targetID, role string) (*domain.Member, error) {
+	f.changeCalls++
+	f.gotActor, f.gotWS, f.gotTarget, f.gotRole = actorID, wsID, targetID, role
+	return f.changeFn(ctx, actorID, wsID, targetID, role)
+}
+
+func (f *fakeMemberUC) TransferOwnership(ctx context.Context, actorID, wsID, targetID string) error {
+	f.transferCalls++
+	f.gotActor, f.gotWS, f.gotTarget = actorID, wsID, targetID
+	return f.transferFn(ctx, actorID, wsID, targetID)
+}
+
 var memberID = uuid.MustParse("99999999-8888-7777-6666-555555555555")
 
 func sampleMember(role domain.Role) *domain.Member {
@@ -91,13 +107,15 @@ func TestMemberRoutesRegistered(t *testing.T) {
 		"POST /workspaces/:id/members",
 		"GET /workspaces/:id/members",
 		"DELETE /workspaces/:id/members/:userId",
+		"PATCH /workspaces/:id/members/:userId",
+		"POST /workspaces/:id/transfer-ownership",
 	} {
 		if !got[want] {
 			t.Errorf("route %q harus terdaftar; ada: %v", want, got)
 		}
 	}
-	if len(got) != 3 {
-		t.Errorf("harapannya tepat 3 route, dapat %v", got)
+	if len(got) != 5 {
+		t.Errorf("harapannya tepat 5 route, dapat %v", got)
 	}
 }
 
@@ -108,8 +126,8 @@ func TestMemberRoutesCoexistWithWorkspaceRoutes(t *testing.T) {
 	handler.NewWorkspaceHandler(&fakeUC{}, nil).RegisterRoutes(r, mw)
 	handler.NewMemberHandler(&fakeMemberUC{}, nil).RegisterRoutes(r, mw)
 
-	if n := len(r.Routes()); n != 6 {
-		t.Errorf("harapannya 6 route (3 workspace + 3 anggota), dapat %d", n)
+	if n := len(r.Routes()); n != 9 {
+		t.Errorf("harapannya 9 route (4 workspace + 5 anggota), dapat %d", n)
 	}
 }
 
