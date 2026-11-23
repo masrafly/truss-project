@@ -91,6 +91,9 @@ DB_SSLMODE=disable
 JWT_SECRET=ganti_dengan_secret_acak_minimal_32_byte
 # Opsional: IP/CIDR reverse proxy yang dipercaya (kosong = tidak ada)
 TRUSTED_PROXIES=
+# Opsional: masa berlaku token (default 15m dan 720h)
+ACCESS_TOKEN_TTL=15m
+REFRESH_TOKEN_TTL=720h
 ```
 
 Buat `.env.example` dengan nama variabel yang sama tetapi tanpa secret atau password asli. Jangan commit `.env` ke Git.
@@ -131,6 +134,9 @@ Secara default aplikasi menggunakan port `8080`, kecuali `APP_PORT` diatur di `.
 |---|---|---|
 | POST | `/auth/register` | Implemented |
 | POST | `/auth/login` | Implemented |
+| POST | `/auth/refresh` | Implemented; publik, rate limit per IP; menukar refresh token (sekali pakai) dengan access token + refresh token baru |
+| POST | `/auth/logout` | Implemented; publik; mencabut satu sesi (rantai refresh token) |
+| POST | `/auth/logout-all` | Implemented; JWT; mencabut semua sesi user |
 | GET | `/auth/me` | Implemented; protected by JWT middleware, mengembalikan profil user |
 | POST | `/workspaces` | Implemented; JWT; pembuat menjadi Owner |
 | GET | `/workspaces` | Implemented; JWT; hanya workspace milik user |

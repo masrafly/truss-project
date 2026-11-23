@@ -102,7 +102,9 @@ Success — `200 OK`:
   "message": "Login berhasil",
   "access_token": "<JWT>",
   "token_type": "Bearer",
-  "expires_in": 86400,
+  "expires_in": 900,
+  "refresh_token": "<token opaque>",
+  "refresh_expires_in": 2592000,
   "data": {
     "internal_id": "UUID",
     "name": "Budi",
@@ -113,7 +115,7 @@ Success — `200 OK`:
 }
 ```
 
-`expires_in` dihitung dari masa berlaku token (24 jam = 86400 detik pada konfigurasi saat ini).
+`expires_in` adalah masa berlaku **access token** dalam detik (default 15 menit = 900; atur dengan `ACCESS_TOKEN_TTL`). `refresh_token` dipakai untuk meminta access token baru tanpa login ulang (lihat 2.4); masa berlakunya `refresh_expires_in` detik (default 30 hari; atur dengan `REFRESH_TOKEN_TTL`). Simpan refresh token dengan aman: siapa pun yang memegangnya dapat memperpanjang sesi sampai token itu dicabut atau kedaluwarsa.
 
 Possible errors:
 - `400 Bad Request`: request tidak valid.
@@ -150,6 +152,43 @@ Success — `200 OK`:
 Possible errors:
 - `401 Unauthorized`: token tidak ada, format salah, signature tidak valid, atau token kedaluwarsa.
 - `404 Not Found`: user pada token tidak lagi ada.
+
+### 2.4 Refresh token
+
+`POST /auth/refresh` — publik (tanpa header `Authorization`), dibatasi rate limit per IP.
+
+Request: `{ "refresh_token": "<token dari login atau refresh sebelumnya>" }`
+
+Success — `200 OK`:
+
+```json
+{
+  "access_token": "<JWT baru>",
+  "token_type": "Bearer",
+  "expires_in": 900,
+  "refresh_token": "<refresh token pengganti>",
+  "refresh_expires_in": 2592000
+}
+```
+
+Aturan:
+- Setiap refresh token **hanya berlaku sekali**. Respons selalu membawa refresh token pengganti; client wajib menyimpan yang baru dan membuang yang lama (rotasi).
+- Memakai ulang token yang sudah dirotasi atau dicabut dianggap tanda token dicuri: seluruh rantai token dari login itu dicabut, sehingga token terbaru milik pemilik sah ikut mati dan ia harus login ulang. Karena itu jangan mengirim dua permintaan refresh bersamaan dengan token yang sama.
+- Login di perangkat lain memulai rantai sendiri dan tidak terpengaruh.
+- Hanya hash SHA-256 token yang disimpan di database; nilai aslinya tidak dapat dipulihkan.
+- Akun yang sudah dihapus tidak dapat memperpanjang sesi.
+
+Possible errors: `400` body tidak valid atau `refresh_token` kosong; `401` token tidak dikenal, kedaluwarsa, sudah dipakai, atau dicabut (pesan sama untuk semua kasus); `429` terlalu banyak permintaan dari IP ini; `500`.
+
+### 2.5 Logout
+
+`POST /auth/logout` — publik, dibatasi rate limit per IP.
+
+Request: `{ "refresh_token": "..." }`. Mencabut seluruh rantai refresh token milik token itu (satu sesi/perangkat). Success — `204 No Content`, juga untuk token yang tidak dikenal atau sudah dicabut (idempoten, dan tidak dapat dipakai untuk menguji keabsahan token). Errors: `400` body tidak valid atau token kosong.
+
+`POST /auth/logout-all` — membutuhkan `Authorization: Bearer <access token>`. Mencabut semua refresh token milik user (semua perangkat). Success — `204 No Content`; `401` tanpa token valid.
+
+**Batasan:** access token yang sudah terbit tetap berlaku sampai kedaluwarsa (maksimal `ACCESS_TOKEN_TTL`, default 15 menit) walaupun user sudah logout. Karena itu masa berlaku access token sengaja pendek, dan otorisasi data tetap dibaca dari database pada setiap request.
 
 ## 3. Workspaces
 

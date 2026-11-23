@@ -5,7 +5,7 @@
 # Pemakaian:  bash scripts/compose-smoke.sh
 # Prasyarat:  docker (engine berjalan), plugin docker compose, curl.
 #
-# Yang diperiksa: migration selesai (versi 10, tidak dirty) dan idempoten; API sehat; alur
+# Yang diperiksa: migration selesai (versi 11, tidak dirty) dan idempoten; API sehat; alur
 # register -> login -> workspace -> project -> task; port hanya di loopback; data database
 # BERTAHAN setelah `down` lalu `up` (membuktikan mount volume PostgreSQL 18 benar); `stop`
 # berhenti rapi (exit code 0). .env milik developer TIDAK dibaca (env-file kosong).
@@ -70,8 +70,8 @@ MIG_ID="$(dc ps -a -q migrate)"
 # Memakai pemisah kolom psql (-F), BUKAN penggabungan teks di SQL: `version || '|' || dirty` mengubah
 # boolean menjadi 'true'/'false', sedangkan psql mencetak kolom boolean mentah sebagai 't'/'f'.
 VERSION="$(dc exec -T db psql -U "$DB_USER" -d "$DB_NAME" -tA -F '|' -c 'select version, dirty from schema_migrations')"
-[ "$VERSION" = "10|f" ] || fail "schema_migrations = '$VERSION', harapannya '10|f' (versi 10, tidak dirty)"
-ok "migration selesai: versi 10, tidak dirty"
+[ "$VERSION" = "11|f" ] || fail "schema_migrations = '$VERSION', harapannya '11|f' (versi 11, tidak dirty)"
+ok "migration selesai: versi 11, tidak dirty"
 
 # -T: tanpa pseudo-TTY. `compose run` mengalokasikan TTY secara default, yang gagal atau menambah
 # karakter kontrol di CI yang tidak punya terminal.
@@ -105,6 +105,18 @@ TK="$(curl -s -X POST "$BASE/projects/$PR/tasks" -H "$JSON" -H "$AUTH" -d '{"tit
 { [ -n "$WS" ] && [ -n "$PR" ] && [ -n "$TK" ]; } || fail "workspace/project/task tidak terbuat"
 [ "$(curl -s "$BASE/tasks/$TK" -H "$AUTH" | json_field title)" = "Task compose" ] || fail "judul task tidak terbaca benar"
 ok "alur register -> login -> workspace -> project -> task berjalan"
+
+# ---------- refresh token (disimpan di PostgreSQL, tabel refresh_tokens) ----------
+RT1="$(curl -s -X POST "$BASE/auth/login" -H "$JSON" -d '{"email":"compose@example.com","password":"password123"}' | json_field refresh_token)"
+[ -n "$RT1" ] || fail "login tidak menghasilkan refresh_token"
+RT2="$(curl -s -X POST "$BASE/auth/refresh" -H "$JSON" -d "{\"refresh_token\":\"$RT1\"}" | json_field refresh_token)"
+{ [ -n "$RT2" ] && [ "$RT2" != "$RT1" ]; } || fail "refresh tidak menghasilkan refresh token baru"
+[ "$(code -X POST "$BASE/auth/refresh" -H "$JSON" -d "{\"refresh_token\":\"$RT1\"}")" = "401" ]   || fail "refresh token lama harus ditolak 401"
+# Nilai asli token tidak boleh tersimpan di database (hanya hash SHA-256).
+LEAK="$(dc exec -T db psql -U "$DB_USER" -d "$DB_NAME" -tA -c "select count(*) from refresh_tokens where token_hash in ('$RT1','$RT2')")"
+[ "$LEAK" = "0" ] || fail "nilai asli refresh token ditemukan di database"
+[ "$(code -X POST "$BASE/auth/refresh" -H "$JSON" -d "{\"refresh_token\":\"$RT2\"}")" = "401" ]   || fail "pemakaian ulang token lama harus mencabut seluruh rantai (token terbaru juga 401)"
+ok "refresh token: rotasi, pemakaian ulang mencabut rantai, hanya hash yang tersimpan"
 
 # ---------- data bertahan setelah down lalu up (volume PostgreSQL 18) ----------
 dc down >/dev/null || fail "docker compose down gagal"      # TANPA -v: volume dipertahankan

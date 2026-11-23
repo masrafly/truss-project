@@ -32,6 +32,8 @@
 - [x] JWT validation helper.
 - [x] JWT middleware.
 - [x] Protected `/auth/me` endpoint (mengembalikan profil user).
+- [x] Refresh token (opaque, tersimpan ter-hash, rotasi sekali pakai, deteksi pemakaian ulang), `POST /auth/refresh`, `/auth/logout`, `/auth/logout-all`; access token 15 menit (`ACCESS_TOKEN_TTL`, `REFRESH_TOKEN_TTL`).
+- [ ] Pembersihan terjadwal refresh token kedaluwarsa dari user yang tidak pernah login lagi (saat ini dibersihkan per user ketika login).
 - [x] Unit test use case auth dengan fake port (`go test ./internal/modules/auth/usecase`).
 - [x] Validasi password (min 8 karakter, maks 72 byte) dipindah ke use case.
 - [x] Proteksi timing login (email tak terdaftar tetap menjalankan perbandingan bcrypt).

@@ -28,7 +28,7 @@ Konfigurasi awal yang dibahas:
 - Signing algorithm: HS256.
 - Issuer: `truss`.
 - Subject: `internal_id` user.
-- Expiration: 24 jam.
+- Expiration access token: 15 menit secara default (`ACCESS_TOKEN_TTL`, batas 1 menit sampai 24 jam). Token ini tidak dapat dicabut, jadi masa hidupnya sengaja pendek.
 - Secret dibaca dari environment variable `JWT_SECRET` oleh `config`, lalu disuntikkan ke `security.JWTManager`. Aplikasi menolak start jika secret kosong atau **kurang dari 32 byte**: secret HS256 yang pendek dapat ditebak offline dari satu token yang bocor, lalu dipakai memalsukan token untuk user mana pun. Buat secret dengan `go run ./cmd/genjwtsecret` (memakai `crypto/rand`, lihat DEVELOPMENT.md). Mengganti secret membatalkan semua token lama (user perlu login ulang).
 - Penerbitan token dilakukan use case melalui port `TokenIssuer`; validasi dilakukan middleware melalui port `TokenValidator`.
 
@@ -39,9 +39,19 @@ Security requirements:
 - Validasi signature, algoritma, issuer, dan expiration.
 - Jangan menaruh password atau data sensitif di JWT payload.
 - Gunakan HTTPS pada deployment.
-- Pertimbangkan access token berumur lebih pendek dan refresh-token flow jika kebutuhan produk memerlukannya.
+- Access token pendek dilengkapi refresh token (lihat bagian 3.1).
 
 JWT yang ditandatangani bukan token terenkripsi. Payload dapat dibaca oleh pemegang token.
+
+### 3.1 Refresh token
+
+- Opaque, 32 byte acak dari `crypto/rand` (bukan JWT). Database hanya menyimpan hash SHA-256; kebocoran database tidak membocorkan token yang masih berlaku. SHA-256 cukup karena entropi token 256 bit (bcrypt hanya perlu untuk secret berentropi rendah seperti password).
+- **Rotasi sekali pakai**: setiap refresh mencabut token lama dan menerbitkan pengganti dalam satu transaksi dengan kunci baris (`FOR UPDATE`), sehingga dua permintaan serentak dengan token yang sama tidak mungkin sama-sama berhasil.
+- **Deteksi pemakaian ulang**: token yang sudah dirotasi/dicabut lalu dipakai lagi mencabut seluruh rantai (family) dari login itu.
+- Masa berlaku `REFRESH_TOKEN_TTL` (default 30 hari, batas 1 jam sampai 90 hari, harus lebih lama dari access token). Token kedaluwarsa milik user dibersihkan saat user itu login lagi.
+- Logout mencabut satu rantai (satu perangkat); `logout-all` mencabut semua. Akun yang dihapus tidak dapat refresh.
+- Endpoint publik `refresh` dan `logout` dibatasi rate limit per IP yang sama dengan login.
+- Sisa risiko: pencuri yang memakai token **lebih dulu** daripada pemilik sah mendapat sesi sampai pemilik memakai token lamanya (yang memicu pencabutan rantai) atau sampai kedaluwarsa. Simpan refresh token di tempat aman (penyimpanan terenkripsi OS atau cookie `HttpOnly` pada frontend), bukan di `localStorage` jika memungkinkan.
 
 ## 4. Authentication vs Authorization
 
@@ -156,7 +166,7 @@ Review dilakukan dengan membaca kode seluruh modul (auth, workspaces, projects, 
 | 5 | Rendah | Register tanpa batas panjang nama/email (500 alih-alih 400) | **Diperbaiki** |
 | 6 | Rendah | Anggota ditambahkan langsung tanpa persetujuan; respons mengungkap email terdaftar | Terbuka: fitur undangan (ROADMAP) |
 | 7 | Rendah | Daftar workspace/project/anggota/aktivitas tanpa pagination | **Diperbaiki**: `page`/`limit` dengan batas maks. 100 di semua endpoint daftar (`platform/pagination`); nilai tidak valid ditolak 400 |
-| 8 | Rendah | Token tidak dapat dicabut (24 jam) | Terbuka: refresh token/logout (ROADMAP). Dampak terbatas karena otorisasi selalu membaca database |
+| 8 | Rendah | Token tidak dapat dicabut (24 jam) | **Diperbaiki**: access token 15 menit + refresh token tersimpan ter-hash, rotasi sekali pakai, deteksi pemakaian ulang, logout dan logout-all. Access token yang sudah terbit tetap berlaku sampai kedaluwarsa (maks. 15 menit) |
 | 9 | Info | `DB_SSLMODE` kosong = `prefer` | Terbuka: wajibkan `require`/`verify-full` di produksi |
 | 10 | Sedang | **Ditemukan setelah review**, saat menguji aplikasi sebagai container: DSN database dirakit tanpa tanda kutip (`password=%s dbname=%s`). Password kosong membuat `dbname` hilang (tersambung ke database default), password dengan spasi/kutip/backslash terpotong atau rusak, dan password berisi `host=...` dapat mengganti host tujuan koneksi | **Diperbaiki**: setiap nilai dikutip dan di-escape (`buildDSN`), dengan test yang mem-parse DSN memakai parser pgx |
 

@@ -19,6 +19,10 @@ type loginRequest struct {
 	Password string `json:"password" binding:"required"`
 }
 
+type refreshRequest struct {
+	RefreshToken string `json:"refresh_token" binding:"required"`
+}
+
 type userResponse struct {
 	ID        string    `json:"internal_id"`
 	Name      string    `json:"name"`

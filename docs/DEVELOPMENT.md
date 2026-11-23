@@ -30,6 +30,10 @@ Seluruh konfigurasi dibaca sekali oleh `internal/config/config.go`.
 | `DB_SSLMODE` | Ya | Mode SSL PostgreSQL |
 | `JWT_SECRET` | Ya | Secret penandatanganan JWT, **minimal 32 byte**; aplikasi berhenti saat start jika kosong atau terlalu pendek |
 | `TRUSTED_PROXIES` | Tidak | IP/CIDR reverse proxy yang dipercaya untuk `X-Forwarded-For`, dipisah koma. Kosong = tidak ada (aman untuk lokal) |
+| `ACCESS_TOKEN_TTL` | Tidak | Masa berlaku access token, format durasi (`15m`, `1h`). Default `15m`, batas 1 menit sampai 24 jam |
+| `REFRESH_TOKEN_TTL` | Tidak | Masa berlaku refresh token (`720h` = 30 hari). Default `720h`, batas 1 jam sampai 2160h, harus lebih lama daripada `ACCESS_TOKEN_TTL` |
+
+Nilai TTL yang salah format atau di luar batas membuat aplikasi menolak start dengan pesan yang menyebut nama variabelnya. Variabel `JWT_EXPIRES_IN` yang mungkin masih ada di `.env` lama **tidak dipakai lagi**; hapus saja.
 
 ## 3. Clean Architecture Rules
 
@@ -272,6 +276,7 @@ docker compose up -d --build            # db -> migration -> API
 | `APP_PORT` | Tidak | Port API di host (default 8080) |
 | `DB_HOST_PORT` | Tidak | Port database di host untuk `psql`/DBeaver (default 55432) |
 | `APP_ENV`, `LOG_LEVEL`, `TRUSTED_PROXIES` | Tidak | Diteruskan ke API (default `development`, `info`, kosong) |
+| `ACCESS_TOKEN_TTL`, `REFRESH_TOKEN_TTL` | Tidak | Diteruskan ke API (default `15m` dan `720h`) |
 
 `DB_HOST` dan `DB_PORT` di `.env` **diabaikan**: di dalam jaringan Compose, database selalu `db:5432`. Bila `compose up` gagal di langkah migration dengan error koneksi/URL, periksa dulu apakah `DB_PASSWORD` memuat karakter selain huruf dan angka.
 

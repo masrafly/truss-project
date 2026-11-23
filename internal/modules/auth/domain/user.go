@@ -20,6 +20,18 @@ type User struct {
 	UpdatedAt    time.Time
 }
 
+// RefreshToken adalah catatan refresh token. Nilai aslinya tidak pernah disimpan, hanya
+// hash-nya. FamilyID sama untuk seluruh token hasil rotasi dari satu login.
+type RefreshToken struct {
+	ID        uuid.UUID
+	UserID    uuid.UUID
+	FamilyID  uuid.UUID
+	TokenHash string
+	ExpiresAt time.Time
+	RevokedAt *time.Time
+	CreatedAt time.Time
+}
+
 // Error domain. Lapisan luar (handler) menerjemahkannya ke status HTTP,
 // lapisan dalam tidak perlu tahu apa itu HTTP atau GORM.
 var (
@@ -27,6 +39,10 @@ var (
 	ErrEmailAlreadyUsed   = errors.New("email sudah digunakan")
 	ErrInvalidCredentials = errors.New("email atau password salah")
 	ErrUserNotFound       = errors.New("user tidak ditemukan")
+
+	// ErrInvalidRefreshToken: refresh token tidak dikenal, kedaluwarsa, sudah dicabut, atau
+	// sudah dipakai (rotasi). Semua kasus sengaja menghasilkan pesan yang sama (401).
+	ErrInvalidRefreshToken = errors.New("refresh token tidak valid")
 )
 
 // ErrTooManyAttempts: terlalu banyak percobaan login gagal untuk akun ini (429).

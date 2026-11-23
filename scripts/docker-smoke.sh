@@ -5,7 +5,8 @@
 # Prasyarat:  docker (engine berjalan) dan curl. Image dibangun lebih dulu: docker build -t truss-api:smoke .
 #
 # Yang diperiksa: image tidak memuat .env/.git/docs/test; HEALTHCHECK menjadi healthy; /healthz dan
-# /readyz 200; alur register -> login -> workspace -> project -> task berjalan; image berjalan
+# /readyz 200; alur register -> login -> workspace -> project -> task berjalan; refresh token
+# (rotasi, pemakaian ulang ditolak, logout); image berjalan
 # sebagai non-root; `docker stop` (SIGTERM) berhenti rapi dengan exit code 0.
 # Semua kredensial dibuat acak per-run dan dibuang bersama container.
 set -euo pipefail
@@ -126,6 +127,22 @@ ok "register, login, workspace, project, task, dan baca task berjalan"
 
 [ "$(code "$BASE/workspaces")" = "401" ] || fail "route privat tanpa token harus 401"
 ok "route privat menolak request tanpa token"
+
+# ---------- refresh token ----------
+LOGIN_BODY="$(curl -s -X POST "$BASE/auth/login" -H "$JSON" -d '{"email":"smoke@example.com","password":"password123"}')"
+RT1="$(echo "$LOGIN_BODY" | json_field refresh_token)"
+[ -n "$RT1" ] || fail "login tidak menghasilkan refresh_token"
+REFRESH_BODY="$(curl -s -X POST "$BASE/auth/refresh" -H "$JSON" -d "{\"refresh_token\":\"$RT1\"}")"
+RT2="$(echo "$REFRESH_BODY" | json_field refresh_token)"
+AT2="$(echo "$REFRESH_BODY" | json_field access_token)"
+{ [ -n "$RT2" ] && [ "$RT2" != "$RT1" ] && [ -n "$AT2" ]; } || fail "refresh tidak menghasilkan pasangan token baru: $REFRESH_BODY"
+[ "$(code "$BASE/auth/me" -H "Authorization: Bearer $AT2")" = "200" ] || fail "access token hasil refresh tidak diterima"
+[ "$(code -X POST "$BASE/auth/refresh" -H "$JSON" -d "{\"refresh_token\":\"$RT1\"}")" = "401" ]   || fail "refresh token lama (sudah dirotasi) harus ditolak 401"
+[ "$(code -X POST "$BASE/auth/refresh" -H "$JSON" -d "{\"refresh_token\":\"$RT2\"}")" = "401" ]   || fail "pemakaian ulang token lama harus mencabut seluruh rantai (token terbaru juga 401)"
+RT3="$(curl -s -X POST "$BASE/auth/login" -H "$JSON" -d '{"email":"smoke@example.com","password":"password123"}' | json_field refresh_token)"
+[ "$(code -X POST "$BASE/auth/logout" -H "$JSON" -d "{\"refresh_token\":\"$RT3\"}")" = "204" ] || fail "logout bukan 204"
+[ "$(code -X POST "$BASE/auth/refresh" -H "$JSON" -d "{\"refresh_token\":\"$RT3\"}")" = "401" ]   || fail "refresh token harus mati setelah logout"
+ok "refresh token: rotasi, pemakaian ulang ditolak, logout mencabut"
 
 # ---------- shutdown rapi ----------
 docker stop -t 10 "$API" >/dev/null

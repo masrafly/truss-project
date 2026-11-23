@@ -121,6 +121,19 @@ Menyimpan riwayat aktivitas task.
 - `new_value` JSONB
 - `created_at`
 
+### refresh_tokens
+
+Menyimpan refresh token (migration 11). Nilai asli token tidak pernah disimpan.
+- `internal_id` UUID, primary key
+- `user_id` → `users.internal_id` (`ON DELETE CASCADE`)
+- `family_id` UUID: sama untuk semua token hasil rotasi dari satu login
+- `token_hash` CHAR(64), unik: SHA-256 heksadesimal dari token
+- `expires_at` TIMESTAMPTZ
+- `revoked_at` TIMESTAMPTZ nullable: terisi bila token sudah dirotasi atau dicabut
+- `created_at`
+
+Indeks pada `user_id` dan `family_id`.
+
 ## 4. Relationship Overview
 
 ```mermaid
@@ -139,6 +152,7 @@ erDiagram
     USERS ||--o{ TASK_COMMENTS : writes
     TASKS ||--o{ TASK_ACTIVITIES : records
     USERS ||--o{ TASK_ACTIVITIES : performs
+    USERS ||--o{ REFRESH_TOKENS : owns
 ```
 
 ## 5. Database Integrity Rules

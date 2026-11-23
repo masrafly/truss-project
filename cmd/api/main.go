@@ -67,7 +67,7 @@ func main() {
 
 	// Infrastruktur
 	hasher := security.NewBcryptHasher()
-	jwtManager, err := security.NewJWTManager(cfg.JWTSecret, 24*time.Hour)
+	jwtManager, err := security.NewJWTManager(cfg.JWTSecret, cfg.AccessTokenTTL)
 	if err != nil {
 		fatal(logg, "gagal membuat JWT manager", err)
 	}
@@ -77,7 +77,9 @@ func main() {
 	// Batas login gagal per akun (email): 10 kali per 15 menit. Sengaja longgar karena
 	// penyerang yang tahu email korban bisa memicu blokir sementara (lihat WithLoginThrottle).
 	loginThrottle := ratelimit.New(10, 15*time.Minute)
-	authUC := authusecase.NewAuthUseCase(userRepo, hasher, jwtManager, logg).WithLoginThrottle(loginThrottle)
+	authUC := authusecase.NewAuthUseCase(userRepo, hasher, jwtManager, logg).
+		WithLoginThrottle(loginThrottle).
+		WithRefreshTokens(authrepo.NewRefreshTokenGormRepository(db), security.NewRefreshTokenCodec(), cfg.RefreshTokenTTL)
 	authHandler := authhandler.NewAuthHandler(authUC, logg)
 
 	// Modul workspaces: repository -> usecase -> handler

@@ -16,7 +16,7 @@ BAGIAN 1. ALUR PENGGUNA (USER JOURNEY)
 
   1. DAFTAR & LOGIN
        Pengguna baru  -> POST /auth/register  -> akun dibuat (password di-hash bcrypt)
-       Pengguna lama  -> POST /auth/login     -> menerima access_token (JWT, 24 jam)
+       Pengguna lama  -> POST /auth/login     -> menerima access_token (JWT, 15 menit) + refresh_token (30 hari, sekali pakai; POST /auth/refresh)
        Semua request berikutnya mengirim:  Authorization: Bearer <access_token>
 
   2. WORKSPACE

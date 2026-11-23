@@ -37,3 +37,31 @@ type LoginThrottle interface {
 	Add(key string)
 	Reset(key string)
 }
+
+// RefreshTokenRepository menyimpan refresh token (hanya hash).
+//
+// Kontrak: Rotate mengembalikan domain.ErrInvalidRefreshToken untuk token yang tidak ada,
+// kedaluwarsa, atau SUDAH DICABUT. Pada kasus terakhir (pemakaian ulang token lama, tanda
+// token dicuri) seluruh rantai token (family) ikut dicabut sebelum error dikembalikan.
+type RefreshTokenRepository interface {
+	// Create menyimpan token baru. Pemanggil mengisi UserID, FamilyID (rantai baru = UUID baru),
+	// TokenHash, dan ExpiresAt.
+	Create(ctx context.Context, t *domain.RefreshToken) error
+
+	// Rotate, secara atomik: mengunci token lama, mencabutnya, dan menyimpan next dengan
+	// UserID dan FamilyID yang sama. Mengembalikan ID pemilik token.
+	Rotate(ctx context.Context, oldHash string, now time.Time, next *domain.RefreshToken) (uuid.UUID, error)
+
+	// RevokeFamily mencabut seluruh rantai milik token ini. Token tidak dikenal bukan error
+	// (idempoten).
+	RevokeFamily(ctx context.Context, hash string, now time.Time) error
+
+	// RevokeAllForUser mencabut semua refresh token user (logout dari semua perangkat).
+	RevokeAllForUser(ctx context.Context, userID uuid.UUID, now time.Time) error
+}
+
+// RefreshTokenCodec membuat token opaque beserta hash-nya (implementasi: platform/security).
+type RefreshTokenCodec interface {
+	New() (plain, hash string, err error)
+	Hash(plain string) string
+}
